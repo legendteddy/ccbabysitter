@@ -30,7 +30,7 @@ func installAutostartDarwin(enable bool) (string, error) {
 		return "", err
 	}
 	if !enable {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := removeDurable(path); err != nil {
 			return "", err
 		}
 		return path, nil
@@ -42,7 +42,7 @@ func installAutostartDarwin(enable bool) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, []byte(launchAgentPlist(bin)), 0o644); err != nil {
+	if err := writeDurable(path, []byte(launchAgentPlist(bin)), 0o644); err != nil {
 		return "", err
 	}
 	return path, nil
