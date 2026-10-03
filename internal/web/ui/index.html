@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Shows every Claude Code session, and keeps the ones you choose alive, awake and reachable.">
+<title>CC Babysitter</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/art.css">
+<script src="/theme.js"></script>
+<script src="/art.js" defer></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+
+<header class="bar">
+  <span class="logo" id="logo" title="Shows every Claude Code session, and keeps the ones you choose alive, awake and reachable."></span>
+  <h1 class="brand">CC Babysitter</h1>
+  <span class="pill awake" id="awake"><i class="held" id="awake-held"></i><span id="awake-text">Computer not kept awake</span></span>
+  <span class="pill reconnecting" id="reconnect" hidden><span id="reconnect-text">Reconnecting</span><span class="pdots" id="reconnect-dots"></span></span>
+  <div class="grow"></div>
+  <input class="search" id="search" type="search" placeholder="Search" aria-label="Search by name, folder or id" spellcheck="false" autocomplete="off">
+  <button class="b" id="toggle-activity" aria-pressed="false" aria-controls="activity">Activity</button>
+  <button class="b" id="open-settings">Settings</button>
+</header>
+
+<p class="info" id="info"></p>
+<p class="info warn" id="login-note" hidden>Claude Code is not logged in on this machine. Run <code class="mono">claude</code> once and log in.</p>
+
+<div class="layout" id="layout">
+  <main class="main">
+
+    <details class="sect" id="sect-babysat" open>
+      <summary><h2>Babysat</h2><span class="n" id="babysat-count">0</span></summary>
+      <div class="cards" id="watches"></div>
+      <p class="empty" id="watches-empty"></p>
+      <div class="empty-hero" id="watches-hero" hidden>
+        <span data-el="mascot"></span>
+        <div>
+          <h3>Nothing babysat yet</h3>
+          <p class="promise" data-f="promise"></p>
+          <p class="next" data-f="next"></p>
+          <div class="attach start" data-el="startbox" hidden>
+            <code class="mono" data-f="startcmd"></code>
+            <button class="b small" data-act="copy-start">Copy</button>
+          </div>
+          <p class="next" data-f="after" hidden></p>
+        </div>
+      </div>
+    </details>
+
+    <details class="sect" id="sect-running" open>
+      <summary><h2>Running</h2><span class="n" id="running-count">0</span></summary>
+      <div class="rows" id="sessions"></div>
+      <p class="empty" id="sessions-empty" data-none="No Claude Code sessions are running."></p>
+    </details>
+
+    <details class="sect" id="sect-past">
+      <summary><h2>Not running</h2><span class="n" id="past-count">0</span><span class="tag handed" id="past-handed" hidden></span></summary>
+      <div class="rows" id="past"></div>
+      <p class="empty" id="past-empty" data-none="Nothing from the last 14 days."></p>
+    </details>
+
+  </main>
+
+  <aside class="activity" id="activity" hidden aria-labelledby="activity-h">
+    <header class="act-head">
+      <h2 id="activity-h">Activity</h2>
+      <div class="grow"></div>
+      <select id="activity-filter" aria-label="Show activity for"><option value="">All sessions</option></select>
+      <button class="b small" id="close-activity">Close</button>
+    </header>
+    <div class="act-body">
+      <ul class="alist" id="activity-list"></ul>
+      <p class="empty" id="activity-empty">Nothing has happened yet.</p>
+    </div>
+  </aside>
+</div>
+
+<ul class="toasts" id="toasts" role="status" aria-live="polite" aria-atomic="false"></ul>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<aside class="drawer" id="drawer-settings" hidden aria-labelledby="settings-h">
+  <header class="dr-head">
+    <h2 id="settings-h">Settings</h2>
+    <div class="grow"></div>
+    <button class="b" data-close="drawer">Close</button>
+  </header>
+  <div class="dr-body">
+
+    <p class="note err" id="set-error" role="alert" hidden></p>
+
+    <div class="fieldset" id="set-desktop">
+      <h3>Starting up</h3>
+      <label class="check"><input type="checkbox" id="set-autostart"><span>Start CC Babysitter when I log in</span></label>
+      <p class="quiet" id="set-autostart-note" hidden>Autostart is not available on this system.</p>
+      <p class="quiet">Put the program somewhere it will stay before you switch this on.</p>
+      <label class="check"><input type="checkbox" id="set-open-browser"><span>Open this page in a browser when CC Babysitter starts</span></label>
+    </div>
+
+    <div class="fieldset" id="set-server" hidden>
+      <h3>New sessions</h3>
+      <label class="check"><input type="checkbox" id="set-auto-babysit"><span>Babysit every new background session</span></label>
+      <p class="quiet">Each background session started on this server is babysat as soon as it starts.</p>
+    </div>
+
+    <div class="fieldset">
+      <h3>Theme</h3>
+      <div class="seg" role="group" aria-label="Theme" id="set-theme-seg">
+        <button class="seg-b" data-theme-mode="dark">Dark</button>
+        <button class="seg-b" data-theme-mode="light">Light</button>
+        <button class="seg-b" data-theme-mode="auto">Auto</button>
+      </div>
+    </div>
+
+  </div>
+</aside>
+
+<dialog class="dlg" id="dlg-babysit" aria-labelledby="dlg-babysit-h">
+  <div class="dlg-body">
+    <h2 id="dlg-babysit-h">Babysit <span data-f="name"></span></h2>
+    <p class="line" data-f="promise"></p>
+    <p class="line warn" data-f="rc" hidden></p>
+    <p class="line warn" data-f="fallback" hidden></p>
+    <label class="check" data-el="login" hidden><input type="checkbox" id="babysit-login"><span>Start CC Babysitter at login so this survives a restart</span></label>
+  </div>
+  <menu class="dlg-acts">
+    <button class="b" data-act="cancel">Cancel</button>
+    <button class="b primary" data-act="go">Babysit</button>
+  </menu>
+</dialog>
+
+<dialog class="dlg" id="dlg-stop" aria-labelledby="dlg-stop-h">
+  <div class="dlg-body">
+    <h2 id="dlg-stop-h">Stop <span data-f="name"></span></h2>
+    <p class="line">Stops the background copy. The conversation is kept.</p>
+    <p class="line warn">A response in progress is lost.</p>
+  </div>
+  <menu class="dlg-acts">
+    <button class="b" data-act="cancel">Cancel</button>
+    <button class="b danger" data-act="go">Stop</button>
+  </menu>
+</dialog>
+
+<dialog class="dlg" id="dlg-back" aria-labelledby="dlg-back-h">
+  <div class="dlg-body">
+    <h2 id="dlg-back-h" data-f="title"></h2>
+    <div data-el="back-desktop" hidden>
+      <p class="line">The background copy ends and <span data-f="name"></span> goes back to Desktop.</p>
+      <p class="line">Open it from Desktop's sidebar to carry on where you left off.</p>
+      <p class="line warn">Remote Control stays off until you switch it on in Desktop.</p>
+    </div>
+    <div data-el="back-vscode" hidden>
+      <p class="line">The background copy ends and <span data-f="name"></span> goes back to VS Code.</p>
+      <p class="line">Open it from the Claude Code panel's past conversations to carry on.</p>
+      <p class="line warn">Remote Control stays off until you switch it on in the VS Code panel.</p>
+    </div>
+    <div data-el="back-terminal" hidden>
+      <p class="line">The background copy ends.</p>
+      <p class="line">Resume it in any terminal with this command.</p>
+      <div class="attach">
+        <code class="mono" data-f="resume"></code>
+        <button class="b small" data-act="copy-resume">Copy</button>
+      </div>
+      <p class="line warn">Remote Control stays off until you type /rc in the session.</p>
+    </div>
+  </div>
+  <menu class="dlg-acts">
+    <button class="b" data-act="cancel">Cancel</button>
+    <button class="b primary" data-act="go"></button>
+  </menu>
+</dialog>
+
+<template id="tpl-watch">
+  <article class="card">
+    <span class="card-mascot" data-el="mascot"></span>
+    <div class="card-main">
+      <div class="row1">
+        <span class="hostmark" data-el="host"></span>
+        <span class="nm" data-f="name"></span>
+        <span class="tag rc" data-f="rc"></span>
+        <span class="tag multi" data-f="multi" hidden></span>
+      </div>
+      <div class="pth mono" data-f="cwd"></div>
+      <p class="state" data-f="state"></p>
+      <p class="state" data-f="state2" hidden></p>
+      <div class="rescue" data-el="rescue" hidden>
+        <p class="head">Kept alive while you were away</p>
+        <p class="sub" data-f="rescue"></p>
+        <div class="journey">
+          <span class="hop from" data-el="from"></span>
+          <span class="arrow"></span>
+          <span class="hop to" data-el="to"></span>
+          <span class="since" data-f="since"></span>
+        </div>
+      </div>
+      <p class="note warn" data-f="warning" hidden></p>
+      <p class="note" data-f="rchint" hidden></p>
+      <div class="attach" data-el="attachbox" hidden>
+        <span class="k">Attach</span>
+        <code class="mono" data-f="attach"></code>
+        <button class="b small" data-act="copy-attach">Copy</button>
+      </div>
+      <div class="attach" data-el="sshbox" hidden>
+        <span class="k">From elsewhere</span>
+        <code class="mono" data-f="sshattach"></code>
+        <button class="b small" data-act="copy-ssh">Copy</button>
+      </div>
+      <dl class="stats">
+        <div class="stat"><dt>CPU</dt><dd data-f="cpu"></dd></div>
+        <div class="stat"><dt>Memory</dt><dd data-f="mem"></dd></div>
+        <div class="stat"><dt>Uptime</dt><dd data-f="uptime"></dd></div>
+        <div class="stat"><dt>Turns</dt><dd data-f="turns"></dd></div>
+        <div class="stat"><dt>Tokens in</dt><dd data-f="tokensIn"></dd></div>
+        <div class="stat"><dt>Tokens out</dt><dd data-f="tokensOut"></dd></div>
+        <div class="stat"><dt>Cache</dt><dd data-f="cache"></dd></div>
+        <div class="stat"><dt>Model</dt><dd data-f="model"></dd></div>
+      </dl>
+    </div>
+    <div class="acts" data-el="acts">
+      <button class="b primary" data-act="back" hidden></button>
+      <a class="b quiet" data-el="remote" target="_blank" rel="noopener noreferrer" hidden>Open on claude.ai<span class="ext"></span></a>
+      <div class="split" data-el="terminal" hidden>
+        <button class="b quiet" data-act="open-terminal">Open in Terminal</button>
+        <button class="b quiet icon" data-act="copy-attach" aria-label="Copy the attach command"><span class="copyglyph"></span></button>
+      </div>
+      <p class="acts-hint" data-f="actshint" hidden></p>
+      <button class="b" data-act="unbabysit" hidden>Unbabysit</button>
+      <button class="b danger" data-act="stop" hidden>Stop background copy</button>
+      <button class="b primary" data-act="resume" hidden>Try again</button>
+      <button class="b" data-act="forget" hidden>Stop watching</button>
+    </div>
+  </article>
+</template>
+
+<template id="tpl-session">
+  <div class="row">
+    <span class="hostmark" data-el="host"></span>
+    <span class="nmcell"><span class="nm" data-f="name"></span><span class="tag multi" data-f="multi" hidden></span></span>
+    <span class="pth mono" data-f="cwd"></span>
+    <i class="rcdot" data-f="rcdot"></i>
+    <span class="status" data-f="status"></span>
+    <div class="acts" data-el="acts">
+      <button class="b small" data-act="copy-attach" hidden>Copy attach</button>
+      <button class="b small" data-act="copy-ssh" hidden>Copy ssh attach</button>
+      <button class="b small danger" data-act="stop" hidden>Stop</button>
+      <button class="b small primary" data-act="babysit">Babysit</button>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-past">
+  <div class="row past">
+    <span class="nmcell"><span class="nm" data-f="name"></span><span class="tag handed" data-f="handed" hidden></span></span>
+    <span class="pth mono" data-f="cwd"></span>
+    <span class="when" data-f="when"></span>
+    <code class="mono cmd" data-f="cmd"></code>
+    <button class="b small" data-act="copy-cmd">Copy</button>
+    <div class="attach elsewhere" data-el="sshbox" hidden>
+      <span class="k">From elsewhere</span>
+      <code class="mono" data-f="sshattach"></code>
+      <button class="b small" data-act="copy-ssh">Copy</button>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-activity">
+  <li class="aline">
+    <time class="t"></time>
+    <div class="am">
+      <div class="atop"><span class="sess" hidden></span><span class="chip" hidden>automatic</span></div>
+      <div class="msg"></div>
+      <div class="why quiet" hidden></div>
+    </div>
+  </li>
+</template>
+
+<template id="tpl-toast">
+  <li class="toast">
+    <span class="tmsg"></span>
+    <button class="tclose" aria-label="Dismiss"></button>
+  </li>
+</template>
+
+</body>
+</html>

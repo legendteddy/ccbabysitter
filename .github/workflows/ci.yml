@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # The page tests run the page's own JavaScript under node and skip
+      # when it is missing. Here a skip would hide a broken page, so a
+      # missing node fails the run instead.
+      - name: Check node
+        shell: bash
+        run: |
+          if ! command -v node >/dev/null 2>&1; then
+            echo "::error::node is not on PATH; the page tests in internal/web need it and would be skipped"
+            exit 1
+          fi
+          node --version
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        shell: bash
+        run: go test ${{ runner.os != 'Windows' && '-race' || '' }} ./...
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files need gofmt:"
+            echo "$unformatted"
+          fi
+          test -z "$unformatted"
+
+  # The install scripts and the release workflow agree on how the release
+  # files are built and named. This runs the install script's tests and
+  # builds every release target the way release.yml does, so a change that
+  # breaks either side fails here rather than on a release tag.
+  release-files:
+    name: release files (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Test the install script
+        run: sh scripts/test-install.sh
+
+      - name: Build every release target
+        run: |
+          out_dir="$RUNNER_TEMP/dist"
+          mkdir -p "$out_dir"
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            ext=""
+            if [ "$os" = windows ]; then ext=".exe"; fi
+            out="$out_dir/ccbabysitter-$os-$arch$ext"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$out" ./cmd/ccbabysitter
+            echo "Built $out"
+          done

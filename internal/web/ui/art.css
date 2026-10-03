@@ -1,0 +1,51 @@
+/* The colours and the one movement of the pixel art. Every colour is a
+   token, so the light palette only redefines them, and nothing here loads
+   anything from anywhere. */
+
+:root,
+[data-theme="dark"] {
+  --px-ink: #3a2213;
+  --px-body: #c8834a;
+  --px-light: #f1d3a6;
+  --px-dark: #9a5a2c;
+  --px-pupil: #20140c;
+  --px-hair: #5a3a26;
+  --px-skin: #f2c9a2;
+  --px-onesie: #9cc4e4;
+  --px-mark: #6fb8e8;
+  --px-screen: rgba(255, 255, 255, .12);
+}
+
+:root[data-theme="light"] {
+  --px-mark: #2f7fb8;
+  --px-screen: rgba(20, 23, 28, .08);
+}
+
+.mascot, .hicon { display: inline-block; flex: none; vertical-align: middle; }
+.mascot { width: 32px; height: 32px; }
+.hicon { width: 14px; height: 14px; }
+
+.m-o { fill: var(--px-ink); }
+.m-b { fill: var(--px-body); }
+.m-l { fill: var(--px-light); }
+.m-d { fill: var(--px-dark); }
+.m-p { fill: var(--px-pupil); }
+.m-h { fill: var(--px-hair); }
+.m-s { fill: var(--px-skin); }
+.m-c { fill: var(--px-onesie); }
+.m-z { fill: var(--px-mark); }
+
+.i-o, .i-a { fill: currentColor; }
+.i-f { fill: var(--px-screen); }
+
+/* The hop: the baby in the air and the baby standing beside the kangaroo
+   take turns, twice. Only a calm kangaroo has the baby beside her. */
+.mascot .m-hop { visibility: hidden; }
+.mascot.hopping[data-pose="calm"] .m-hop { animation: m-hop-up .45s steps(1, end) 4; }
+.mascot.hopping[data-pose="calm"] .m-rest { animation: m-hop-rest .45s steps(1, end) 4; }
+@keyframes m-hop-up { 0% { visibility: visible; } 50% { visibility: hidden; } }
+@keyframes m-hop-rest { 0% { visibility: hidden; } 50% { visibility: visible; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot.hopping .m-hop, .mascot.hopping .m-rest { animation: none; }
+}

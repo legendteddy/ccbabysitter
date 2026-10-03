@@ -1,0 +1,149 @@
+name: Release
+
+# A pushed tag v<Version> builds and publishes a release. Version is
+# MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH-<pre> such as 0.5.0-rc.1, which is
+# published as a pre-release. Running it by hand is always a dry run:
+# everything is built and checked, and the files are uploaded as a workflow
+# artifact instead of a release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Read the version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          file=internal/buildinfo/buildinfo.go
+          count="$(grep -c '^const Version = ' "$file" || true)"
+          if [ "$count" != 1 ]; then
+            echo "::error::expected exactly one 'const Version = ' line in $file, found $count"
+            exit 1
+          fi
+          version="$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' "$file")"
+          if ! printf '%s\n' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?'; then
+            echo "::error::could not read one MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-<pre> Version from $file (got '$version')"
+            exit 1
+          fi
+          if [ "$EVENT" = push ] && [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match the build's version; expected v$version"
+            exit 1
+          fi
+          case "$version" in
+          *-*) prerelease=true ;;
+          *) prerelease=false ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Version $version, pre-release: $prerelease"
+
+      - name: Check node
+        run: |
+          if ! command -v node >/dev/null 2>&1; then
+            echo "::error::node is not on PATH; the page tests in internal/web need it and would be skipped"
+            exit 1
+          fi
+          node --version
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build
+        run: |
+          mkdir -p dist
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            ext=""
+            if [ "$os" = windows ]; then ext=".exe"; fi
+            out="dist/ccbabysitter-$os-$arch$ext"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$out" ./cmd/ccbabysitter
+            echo "Built $out"
+          done
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum ccbabysitter-* > checksums.txt
+          cat checksums.txt
+
+      # Each published binary gets a signed build provenance attestation,
+      # which `gh attestation verify` checks against this repository and
+      # workflow. A dry run attests nothing.
+      # Attestations need the public repository; elsewhere this step is skipped.
+      - name: Attest build provenance
+        if: github.event_name == 'push' && github.repository == 'pejmanebrahimi/ccbabysitter'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'dist/ccbabysitter-*'
+
+      - name: Release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # The section is everything after the "## <Version>" heading line,
+          # such as "## 0.5.0 (date)" or "## 0.5.0-rc.1 (date)", up to the
+          # next "## " heading, with blank lines trimmed at both ends.
+          awk -v v="$VERSION" '
+            on && /^## / { exit }
+            on { lines[++n] = $0; next }
+            index($0, "## " v) == 1 {
+              rest = substr($0, length("## " v) + 1)
+              if (rest == "" || substr(rest, 1, 1) == " ") on = 1
+            }
+            END {
+              first = 1; last = n
+              while (first <= last && lines[first] ~ /^[ \t\r]*$/) first++
+              while (last >= first && lines[last] ~ /^[ \t\r]*$/) last--
+              for (i = first; i <= last; i++) print lines[i]
+            }
+          ' docs/CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::docs/CHANGELOG.md has no '## $VERSION' section, or it is empty"
+            exit 1
+          fi
+          cat release-notes.md
+
+      - name: Publish the release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -- dist/* --verify-tag --title "CC Babysitter $VERSION" --notes-file release-notes.md
+          if [ "$PRERELEASE" = true ]; then set -- "$@" --prerelease; fi
+          gh release create "$TAG" "$@"
+
+      - name: Upload the dry run
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ccbabysitter-${{ steps.version.outputs.version }}-dry-run
+          path: |
+            dist/
+            release-notes.md
+          if-no-files-found: error

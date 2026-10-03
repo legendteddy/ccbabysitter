@@ -1,0 +1,222 @@
+package main
+
+import (
+	"bytes"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+)
+
+// autostartInstaller enables or disables launching this program at login
+// on the platform this binary was built for. It is set by exactly one of
+// autostart_darwin.go, autostart_windows.go or autostart_linux.go through
+// an init function; a build for any other platform leaves it nil, which
+// tells the rest of the program that autostart is not offered here.
+var autostartInstaller func(enable bool) (path string, err error)
+
+// autostartInstalled reports whether the login item autostartInstaller
+// writes is there now. It only ever looks. It is set alongside
+// autostartInstaller by the same init functions, and is nil wherever that
+// one is.
+var autostartInstalled func() (bool, error)
+
+// pathPresent reports whether something is at path, without following a
+// symlink there. Not finding it is an answer, and every other failure is
+// an error.
+func pathPresent(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+// resolvedExecutablePath returns the absolute path to the running binary
+// with any symlink resolved, so an autostart entry always names the real
+// file rather than a link that might later point somewhere else. It
+// refuses a path that looks like a scratch build, since writing an
+// autostart entry or a systemd unit that names one would point at a file
+// that is already gone by the time anything tries to run it.
+func resolvedExecutablePath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	real, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", err
+	}
+	if err := refuseTemporaryBinary(real, os.TempDir()); err != nil {
+		return "", err
+	}
+	return real, nil
+}
+
+// refuseTemporaryBinary reports a plain error when path sits inside
+// tempDir, or contains a path element starting with "go-build": both mark
+// a binary that "go run" compiled into a scratch directory it deletes as
+// soon as the command exits, rather than something built to stay put.
+// tempDir is a parameter (rather than this calling os.TempDir() itself) so
+// the check can be tested without depending on where the test binary
+// itself happens to live.
+func refuseTemporaryBinary(path, tempDir string) error {
+	if tempDir != "" {
+		// tempDir itself can be a symlink (/tmp on macOS points at
+		// /private/tmp), while path has already had its own symlinks
+		// resolved by the time this runs for real. Checking against both
+		// forms means the comparison works whichever of the two, or
+		// neither, has been resolved, which is what lets this be tested
+		// with plain strings instead of real paths on disk.
+		candidates := []string{tempDir}
+		if real, err := filepath.EvalSymlinks(tempDir); err == nil && real != tempDir {
+			candidates = append(candidates, real)
+		}
+		for _, dir := range candidates {
+			if path == dir || strings.HasPrefix(path, dir+string(filepath.Separator)) {
+				return fmt.Errorf("%s is inside a temporary folder. Put the program somewhere it will stay, then switch this on", path)
+			}
+		}
+	}
+	for _, part := range strings.Split(path, string(filepath.Separator)) {
+		if strings.HasPrefix(part, "go-build") {
+			return fmt.Errorf("%s looks like a temporary build made by go run. Build it with go build, then switch this on from the result", path)
+		}
+	}
+	return nil
+}
+
+// launchAgentPlist is the macOS LaunchAgent that starts binPath at the next
+// login, with no arguments, so the page opens the way a person starting
+// it themselves would see it.
+func launchAgentPlist(binPath string) string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.ccbabysitter</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>` + xmlEscape(binPath) + `</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+</dict>
+</plist>
+`
+}
+
+func xmlEscape(s string) string {
+	var b bytes.Buffer
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
+}
+
+// startupCmd is the two line script the Windows Startup folder runs at
+// login. It refuses a path holding a double quote or a percent sign,
+// since either could make the script do something other than start the
+// named program: a quote would end the quoted argument early, and cmd.exe
+// expands a percent-delimited name as an environment variable.
+func startupCmd(binPath string) (string, error) {
+	if strings.ContainsAny(binPath, `"%`) {
+		return "", fmt.Errorf("the executable path cannot be quoted safely for a startup script: %q", binPath)
+	}
+	return "@echo off\nstart \"\" \"" + binPath + "\"\n", nil
+}
+
+// servicePath is the PATH the systemd user unit runs with, after the
+// folder holding the claude CLI. A user service otherwise gets systemd's
+// own default, which leaves out ~/.local/bin, where the official
+// installer puts the CLI, so the CLI and anything it starts in turn could
+// not find it.
+const servicePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// unitFile is the systemd user unit that starts binPath, used both by the
+// install subcommand, a plain run on a Linux server and the Linux
+// autostart toggle. It passes --service, which serves in the foreground
+// and never opens a browser, since a systemd user unit can start before
+// the desktop session (and so before there is anywhere to open a browser)
+// is up. When
+// cliPath, the claude CLI found at install time, is known, the unit puts
+// its folder first on PATH; without one there is no Environment line and
+// the unit gets systemd's default.
+//
+// A binPath holding a line break cannot be written into a unit at all, so
+// it is an error naming the path.
+//
+// KillMode=process makes stopping or restarting the service end CC
+// Babysitter's own process only: Claude's background sessions, and the
+// daemon that hosts them, are started from the service and so live in its
+// group, and they must outlive it, since nothing but a confirmed Stop may
+// close a session.
+func unitFile(binPath, cliPath string) (string, error) {
+	exec, err := unitExecStart(binPath)
+	if err != nil {
+		return "", err
+	}
+	env := ""
+	if cliPath != "" {
+		// The unit is only ever read by systemd, so the path is a Linux one
+		// whatever this was built for, and path rather than filepath takes
+		// it apart.
+		env = unitEnvironment("PATH="+path.Dir(cliPath)+":"+servicePath) + "\n"
+	}
+	return `[Unit]
+Description=CC Babysitter: keeps Claude Code sessions alive and remote-controlled
+After=network-online.target
+
+[Service]
+` + env + `ExecStart=` + exec + ` --service
+Restart=on-failure
+RestartSec=5
+KillMode=process
+
+[Install]
+WantedBy=default.target
+`, nil
+}
+
+// unitEnvironment renders an Environment= line for assignment. systemd
+// expands a percent sign as a specifier, so each one is doubled, and an
+// assignment holding a space, a quote of either kind or a backslash is put
+// in double quotes, with the backslash and the double quote escaped, so it
+// stays one assignment.
+func unitEnvironment(assignment string) string {
+	assignment = strings.ReplaceAll(assignment, "%", "%%")
+	if strings.ContainsAny(assignment, " \t\"'\\") {
+		r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+		return `Environment="` + r.Replace(assignment) + `"`
+	}
+	return "Environment=" + assignment
+}
+
+// unitExecStart renders the program part of an ExecStart= line for
+// binPath by the rules of unitEnvironment, with one more: systemd
+// substitutes $VARIABLE in the words of an ExecStart= line, so a dollar
+// sign is doubled as well as a percent sign. A path holding a space, a
+// tab, a quote of either kind or a backslash is put in double quotes, with
+// the backslash and the double quote escaped (a single quote is literal
+// inside them). A line break cannot be
+// carried in a unit line, so it is an error.
+func unitExecStart(binPath string) (string, error) {
+	if strings.ContainsAny(binPath, "\n\r") {
+		return "", fmt.Errorf("the executable path cannot be written into a service file: %q", binPath)
+	}
+	binPath = strings.ReplaceAll(binPath, "%", "%%")
+	binPath = strings.ReplaceAll(binPath, "$", "$$")
+	if strings.ContainsAny(binPath, " \t\"'\\") {
+		r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+		return `"` + r.Replace(binPath) + `"`, nil
+	}
+	return binPath, nil
+}

@@ -1,0 +1,51 @@
+name: Bug report
+description: CC Babysitter did something it should not have, or did not do what it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. For a security problem, do not open an issue: report it privately as `SECURITY.md` describes.
+  - type: input
+    id: version
+    attributes:
+      label: CC Babysitter version
+      description: The output of `ccbabysitter version`.
+      placeholder: CC Babysitter 0.4.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Name, version and processor, and whether the machine has a display or is a server you reach over ssh.
+      placeholder: Linux on arm64, a server over ssh
+    validations:
+      required: true
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: The output of `claude --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, step by step, and what CC Babysitter did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What you expected CC Babysitter to do instead.
+    validations:
+      required: true
+  - type: textarea
+    id: activity
+    attributes:
+      label: Activity lines
+      description: The lines from the Activity panel around the time it happened. Remove anything you do not want to make public, such as folder or session names.
+      render: text

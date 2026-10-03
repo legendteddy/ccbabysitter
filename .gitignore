@@ -1,0 +1,13 @@
+# IDE
+.idea/
+.vscode/
+
+# Go build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Local site assembly
+/_site/

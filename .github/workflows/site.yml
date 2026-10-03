@@ -1,0 +1,90 @@
+name: Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - "internal/buildinfo/**"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # The site deploys only from the public repository.
+    if: github.repository == 'pejmanebrahimi/ccbabysitter'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # The site tests run the page's own JavaScript under node and skip
+      # when it is missing. Here a skip would hide a broken page, so a
+      # missing node fails the run instead.
+      - name: Check node
+        shell: bash
+        run: |
+          if ! command -v node >/dev/null 2>&1; then
+            echo "::error::node is not on PATH; the page tests in site would be skipped"
+            exit 1
+          fi
+          node --version
+      - name: Check the site
+        run: go test ./site
+      # install.sh is published with the site, so its tests run before
+      # anything is uploaded.
+      - name: Test the install script
+        run: sh scripts/test-install.sh
+      - name: Assemble
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir _site
+          (cd site && find . -type f ! -name '*.go' -exec cp --parents {} ../_site/ \;)
+          cp scripts/install.sh _site/install.sh
+          cp scripts/install.ps1 _site/install.ps1
+          version=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/buildinfo/buildinfo.go)
+          if [ -z "$version" ]; then
+            echo "::error::version not found in internal/buildinfo/buildinfo.go"
+            exit 1
+          fi
+          if ! grep -rlq -e '{{VERSION}}' _site; then
+            echo "::error::no placeholder found in _site"
+            exit 1
+          fi
+          grep -rlZ -e '{{VERSION}}' _site | xargs -0 sed -i "s/{{VERSION}}/${version}/g"
+          if grep -rn -e '{{VERSION}}' _site; then echo "::error::placeholder left"; exit 1; fi
+          cmp scripts/install.sh _site/install.sh
+          cmp scripts/install.ps1 _site/install.ps1
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.repository == 'pejmanebrahimi/ccbabysitter'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

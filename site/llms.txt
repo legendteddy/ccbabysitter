@@ -1,0 +1,21 @@
+# CC Babysitter
+
+> Keeps Claude Code sessions alive and reachable. If the app running a babysat session (Claude Desktop, VS Code or a terminal) closes, crashes or is killed, CC Babysitter starts the same session again in the background with Remote Control on, so it stays reachable from a phone. On a headless server it runs as a user service, so babysat sessions survive SSH drops and reboots. Free, open source (MIT), for macOS, Windows and Linux.
+
+## Install
+
+- macOS and Linux: `curl -fsSL https://ccbabysitter.dev/install.sh | sh`
+- Windows: `irm https://ccbabysitter.dev/install.ps1 | iex`
+- Go: `go install ccbabysitter.dev/ccbabysitter/cmd/ccbabysitter@latest`
+
+## Use it from an AI agent
+
+- `ccbabysitter babysit self`: keep the Claude Code session the command runs in alive
+- `ccbabysitter list --json`: every session on the machine, as JSON
+- `ccbabysitter --help`: all commands, and `ccbabysitter help <command>` for one
+
+## Links
+
+- [Get started](https://github.com/pejmanebrahimi/ccbabysitter#quick-start): desktop and server steps
+- [README](https://github.com/pejmanebrahimi/ccbabysitter): full documentation, settings, uninstalling
+- [Releases](https://github.com/pejmanebrahimi/ccbabysitter/releases)
