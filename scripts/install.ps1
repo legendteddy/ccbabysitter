@@ -2,9 +2,12 @@
 #
 #   irm https://ccbabysitter.dev/install.ps1 | iex
 #
-# It downloads the release program for this machine, checks it against the
-# release's checksums.txt, puts it in %LOCALAPPDATA%\Programs\CCBabysitter
-# and adds that folder to your user Path. It needs no admin rights.
+# It downloads the release programs for this machine, ccbabysitter.exe and
+# the windowless ccbabysitter-background.exe that runs in the background,
+# checks them against the release's checksums.txt, puts them in
+# %LOCALAPPDATA%\Programs\CCBabysitter and adds that folder to your user
+# Path. A CC Babysitter that is running is asked to quit first and started
+# again in the background afterwards. It needs no admin rights.
 #
 # Settings, read from the environment:
 #   CCBABYSITTER_VERSION       release tag to install, such as v0.4.0
@@ -26,7 +29,7 @@ function Install-CCBabysitter {
     $ProgressPreference = 'SilentlyContinue'
 
     $repoUrl = 'https://github.com/pejmanebrahimi/ccbabysitter'
-    $runningMessage = 'CC Babysitter is running. Quit it (Ctrl+C in its window), then run this again.'
+    $runningMessage = 'CC Babysitter is running and could not be asked to quit. Quit it (Ctrl+C in its window, or ccbabysitter quit), then run this again.'
 
     # Test-FileLocked reports whether an exception, or one inside it, is a
     # sharing or lock violation: the file is open in another program.
@@ -69,6 +72,9 @@ function Install-CCBabysitter {
         }
     }
     $asset = "ccbabysitter-windows-$arch.exe"
+    # The background copy is the same program built for Windows to show no
+    # console window, installed beside ccbabysitter.exe.
+    $bgAsset = "ccbabysitter-background-windows-$arch.exe"
 
     if ($env:CCBABYSITTER_DOWNLOAD_URL) {
         $base = $env:CCBABYSITTER_DOWNLOAD_URL.TrimEnd('/')
@@ -96,69 +102,36 @@ function Install-CCBabysitter {
         $dir = $dir.TrimEnd('\')
     }
     $dest = Join-Path $dir 'ccbabysitter.exe'
+    $bgDest = Join-Path $dir 'ccbabysitter-background.exe'
 
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ccbabysitter-' + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-    $part = $null
-    $bak = "$dest.bak"
-    $moved = $false
-    try {
-        $file = Join-Path $tmp $asset
-        $sums = Join-Path $tmp 'checksums.txt'
-        Write-Host "Downloading $asset from $base"
-        foreach ($pair in @(@("$base/$asset", $file), @("$base/checksums.txt", $sums))) {
-            try {
-                Invoke-WebRequest -UseBasicParsing -Uri $pair[0] -OutFile $pair[1]
-            } catch {
-                throw "Could not download $($pair[0]): $(Get-Reason $_.Exception)"
-            }
-        }
-
-        $want = $null
-        foreach ($line in Get-Content -LiteralPath $sums) {
-            $fields = $line.Trim() -split '\s+'
-            if ($fields.Count -ge 2 -and ($fields[1] -ceq $asset -or $fields[1] -ceq "*$asset")) {
-                $want = $fields[0].ToLowerInvariant()
-                break
-            }
-        }
-        if (-not $want) {
-            throw "checksums.txt has no line for $asset, so the download cannot be checked. Nothing was installed."
-        }
-        $got = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($got -ne $want) {
-            throw "The download of $asset does not match its checksum (expected $want, got $got). Nothing was installed."
-        }
-
-        # The new copy is written beside the old one under a temporary
-        # name. The old ccbabysitter.exe is then moved aside to
-        # ccbabysitter.exe.bak and the new copy moved into place; if that
-        # move fails, the old copy is moved back. The .bak is kept until
-        # the installed program has run (see below), so a failed install
-        # never loses the old program or leaves a broken
-        # ccbabysitter.exe behind.
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        $part = Join-Path $dir ('.ccbabysitter-' + [Guid]::NewGuid().ToString('N') + '.part')
+    # Replace-File puts the new copy at $src in place of $target: written
+    # beside it under a temporary name, the old one moved aside to .bak,
+    # the new one moved into place, and the old one moved back if that
+    # fails. It returns whether there is a .bak to delete or put back.
+    function Replace-File($src, $target) {
+        $bak = "$target.bak"
+        $part = Join-Path (Split-Path -Parent $target) ('.ccbabysitter-' + [Guid]::NewGuid().ToString('N') + '.part')
+        $moved = $false
         try {
-            [IO.File]::Copy($file, $part, $true)
-            if (Test-Path -LiteralPath $dest) {
+            [IO.File]::Copy($src, $part, $true)
+            if (Test-Path -LiteralPath $target) {
                 # Windows keeps a running program's file open, so it can
                 # be neither written nor moved. Opening it for writing
                 # finds that out while the old copy is still whole.
-                [IO.File]::Open($dest, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None).Close()
+                [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None).Close()
                 if (Test-Path -LiteralPath $bak) {
                     [IO.File]::Delete($bak)
                 }
-                [IO.File]::Move($dest, $bak)
+                [IO.File]::Move($target, $bak)
                 $moved = $true
             }
             try {
-                [IO.File]::Move($part, $dest)
+                [IO.File]::Move($part, $target)
             } catch {
                 $failure = $_
                 if ($moved) {
                     try {
-                        [IO.File]::Move($bak, $dest)
+                        [IO.File]::Move($bak, $target)
                         $moved = $false
                     } catch {
                         throw "$(Get-Reason $failure.Exception). The old copy could not be put back and is at $bak"
@@ -170,17 +143,152 @@ function Install-CCBabysitter {
             if (Test-FileLocked $_.Exception) {
                 throw $runningMessage
             }
-            throw "Could not install ${dest}: $(Get-Reason $_.Exception)"
+            throw "Could not install ${target}: $(Get-Reason $_.Exception)"
+        } finally {
+            if (Test-Path -LiteralPath $part) {
+                Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+            }
+        }
+        return $moved
+    }
+
+    # Restore-File puts the .bak of $target back, for an install that did
+    # not work out.
+    function Restore-File($target) {
+        $bak = "$target.bak"
+        if (Test-Path -LiteralPath $target) {
+            [IO.File]::Delete($target)
+        }
+        [IO.File]::Move($bak, $target)
+    }
+
+    # Invoke-Quiet runs the installed program and returns its exit code,
+    # with its output thrown away. Windows PowerShell 5.1 turns a line a
+    # program writes to stderr into an error, which this script's Stop
+    # preference would end on, so that preference is relaxed in here.
+    function Invoke-Quiet($exe, [string[]]$arguments) {
+        $ErrorActionPreference = 'Continue'
+        & $exe @arguments *> $null
+        return $LASTEXITCODE
+    }
+
+    # Test-Writable reports whether every file in $paths that exists can be
+    # opened for writing, which a running program's file cannot.
+    function Test-Writable([string[]]$paths) {
+        foreach ($path in $paths) {
+            if (-not (Test-Path -LiteralPath $path)) {
+                continue
+            }
+            try {
+                [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None).Close()
+            } catch {
+                return $false
+            }
+        }
+        return $true
+    }
+
+    # Get-Sum is the checksum checksums.txt gives for $name, or nothing.
+    function Get-Sum($sums, $name) {
+        foreach ($line in Get-Content -LiteralPath $sums) {
+            $fields = $line.Trim() -split '\s+'
+            if ($fields.Count -ge 2 -and ($fields[1] -ceq $name -or $fields[1] -ceq "*$name")) {
+                return $fields[0].ToLowerInvariant()
+            }
+        }
+        return $null
+    }
+
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ccbabysitter-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    $moved = $false
+    $bgMoved = $false
+    $wasRunning = $false
+    try {
+        $sums = Join-Path $tmp 'checksums.txt'
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri "$base/checksums.txt" -OutFile $sums
+        } catch {
+            throw "Could not download $base/checksums.txt: $(Get-Reason $_.Exception)"
+        }
+        # Releases before 0.5 have no windowless program: those install
+        # ccbabysitter.exe alone, as they always did.
+        $names = @($asset)
+        if (Get-Sum $sums $bgAsset) {
+            $names += $bgAsset
+        }
+        $files = @{}
+        foreach ($name in $names) {
+            $files[$name] = Join-Path $tmp $name
+            Write-Host "Downloading $name from $base"
+            try {
+                Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $files[$name]
+            } catch {
+                throw "Could not download $base/${name}: $(Get-Reason $_.Exception)"
+            }
+            $want = Get-Sum $sums $name
+            if (-not $want) {
+                throw "checksums.txt has no line for $name, so the download cannot be checked. Nothing was installed."
+            }
+            $got = (Get-FileHash -LiteralPath $files[$name] -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($got -ne $want) {
+                throw "The download of $name does not match its checksum (expected $want, got $got). Nothing was installed."
+            }
+        }
+        $withBackground = $files.ContainsKey($bgAsset)
+
+        # A running CC Babysitter keeps its program files open, so it is
+        # asked to quit first, and started again in the background once
+        # the new version is in place. The wait is for the files to be
+        # let go, not only for the page to stop answering. A copy from
+        # before quit existed does not know the command and stays running,
+        # and the replace below then says to quit it by hand.
+        $quitAsked = $false
+        if ($withBackground -and (Test-Path -LiteralPath $dest)) {
+            if ((Invoke-Quiet $dest @('status')) -eq 0) {
+                $wasRunning = $true
+                Write-Host 'Asking CC Babysitter to quit, to replace it.'
+                if ((Invoke-Quiet $dest @('quit')) -eq 0) {
+                    $quitAsked = $true
+                    $deadline = (Get-Date).AddSeconds(15)
+                    while (-not (Test-Writable @($dest, $bgDest)) -and (Get-Date) -lt $deadline) {
+                        Start-Sleep -Milliseconds 300
+                    }
+                }
+            }
+        }
+
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        # A windowless program that is new here has no .bak; a rollback
+        # removes it instead.
+        $bgNew = $withBackground -and -not (Test-Path -LiteralPath $bgDest)
+        try {
+            if ($withBackground) {
+                $bgMoved = Replace-File $files[$bgAsset] $bgDest
+            }
+            try {
+                $moved = Replace-File $files[$asset] $dest
+            } catch {
+                if ($bgMoved) {
+                    try { Restore-File $bgDest } catch { }
+                } elseif ($bgNew) {
+                    Remove-Item -LiteralPath $bgDest -Force -ErrorAction SilentlyContinue
+                }
+                throw
+            }
+        } catch {
+            # Asked to quit, it answered, but has not let its files go yet.
+            if ($quitAsked -and $_.Exception.Message -eq $runningMessage) {
+                throw 'CC Babysitter was asked to quit and is still letting go of its files. Run this again in a moment.'
+            }
+            throw
         }
     } finally {
-        if ($part -and (Test-Path -LiteralPath $part)) {
-            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
-        }
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    # The old copy is deleted only now that the new one has run. If it
-    # does not run, the old one is put back as well as it can be.
+    # The old copies are deleted only now that the new program has run. If
+    # it does not run, the old ones are put back as well as they can be.
     $installed = $null
     $runs = $false
     try {
@@ -190,21 +298,35 @@ function Install-CCBabysitter {
         $runs = $false
     }
     if (-not $runs) {
-        if ($moved) {
+        if ($moved -or $bgMoved) {
             try {
-                [IO.File]::Delete($dest)
-                [IO.File]::Move($bak, $dest)
+                if ($moved) { Restore-File $dest }
+                if ($bgMoved) { Restore-File $bgDest }
+                if ($bgNew) { Remove-Item -LiteralPath $bgDest -Force -ErrorAction SilentlyContinue }
             } catch {
-                throw "$dest was installed but does not run on this machine, and the old copy could not be put back. It is at $bak"
+                throw "$dest was installed but does not run on this machine, and the old copy could not be put back. It is at $dest.bak"
             }
             throw "$dest was installed but does not run on this machine, so the old copy was put back."
         }
+        if ($bgNew) { Remove-Item -LiteralPath $bgDest -Force -ErrorAction SilentlyContinue }
         throw "$dest was installed but does not run on this machine."
     }
-    if ($moved) {
-        Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue
+    foreach ($target in @($dest, $bgDest)) {
+        Remove-Item -LiteralPath "$target.bak" -Force -ErrorAction SilentlyContinue
     }
-    Write-Host "Installed $installed to $dest"
+    Write-Host "Installed $installed to $dir"
+
+    # An earlier version started at login from a Startup folder script,
+    # which opens a console window. With the windowless program installed,
+    # the per-user Run value takes its place, also when CC Babysitter is not
+    # running now.
+    $legacy = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\CCBabysitter.cmd'
+    if ($withBackground -and $env:APPDATA -and (Test-Path -LiteralPath $legacy)) {
+        $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+        Set-ItemProperty -Path $run -Name 'CCBabysitter' -Value ('"' + $bgDest + '" --service')
+        Remove-Item -LiteralPath $legacy -Force
+        Write-Host 'Start at login now starts the windowless program, with no console window.'
+    }
 
     # The user Path is read and written as stored, so entries such as
     # %USERPROFILE%\bin keep their variables rather than being expanded.
@@ -236,7 +358,17 @@ function Install-CCBabysitter {
     }
 
     Write-Host ''
-    Write-Host 'Start it with: ccbabysitter'
+    if ($wasRunning) {
+        # The new version runs in the background again, and prints where
+        # its page is, without opening it.
+        $ErrorActionPreference = 'Continue'
+        & $dest --no-open
+        if ($LASTEXITCODE -ne 0) {
+            throw 'CC Babysitter was updated but did not start in the background again. Start it with: ccbabysitter'
+        }
+    } else {
+        Write-Host 'Start it with: ccbabysitter'
+    }
 }
 
 Install-CCBabysitter
