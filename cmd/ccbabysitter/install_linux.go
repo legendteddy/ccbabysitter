@@ -78,11 +78,6 @@ var runSystemctl = func(args ...string) error {
 	return cmd.Run()
 }
 
-// executablePath is where this program is, for the unit to start. Tests
-// replace it, since a test binary lives in a temporary folder that a unit
-// must never name.
-var executablePath = resolvedExecutablePath
-
 // UnitKind reads whether the installed unit is a desktop's, wanted by the
 // graphical session, or a server's, wanted at boot. known is false when
 // there is no unit, or it names neither.
@@ -285,7 +280,7 @@ func (systemdControl) SetLingering(user string, on bool) error {
 // answer shows up as the systemctl step that failed, never as a run in
 // this terminal.
 func runInstall(out io.Writer) int {
-	o := launchOptions{Install: true, Headless: hosts.Headless(), NoOpen: true}
+	o := launchOptions{Install: true, Headless: hosts.Headless(), Server: true, NoOpen: true}
 	return runLauncher(out, newServiceControl(), state.DefaultDir(), o, realLaunchDeps())
 }
 
@@ -321,7 +316,3 @@ func runUninstall(out io.Writer) int {
 	fmt.Fprintln(out, foregroundHint)
 	return 0
 }
-
-// foregroundHint is how to run CC Babysitter after uninstall without a
-// plain run setting the service up again.
-const foregroundHint = "To run CC Babysitter only while a terminal stays open, start it with: ccbabysitter --foreground"

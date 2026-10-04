@@ -29,9 +29,13 @@ type launchOptions struct {
 	// Install is the install subcommand: a server unit that starts at
 	// boot, lingering on, and start at login on whatever was chosen before.
 	Install bool
-	// Headless is whether this machine has no display, such as a server
-	// reached over ssh.
+	// Headless is whether this machine has no display here, such as a
+	// machine reached over ssh: the start information then says how to
+	// connect, and no page is opened.
 	Headless bool
+	// Server is whether the unit starts at boot with lingering rather than
+	// at login: a Linux machine with no display.
+	Server bool
 	// NoOpen keeps the launcher from opening the page.
 	NoOpen bool
 }
@@ -125,7 +129,7 @@ func startInBackground(out io.Writer, sc serviceControl, stateDir string, o laun
 // running after the person logs out.
 func runLauncher(out io.Writer, sc serviceControl, stateDir string, o launchOptions, d launchDeps) int {
 	user, address := currentUserAndAddress(stateDir)
-	desktop := !o.Install && !o.Headless
+	desktop := !o.Install && !o.Server
 	if !o.Install && sc.Installed() {
 		desktop = keptKind(sc, stateDir, user, desktop)
 	}
@@ -177,7 +181,7 @@ func runLauncher(out io.Writer, sc serviceControl, stateDir string, o launchOpti
 		page, ok = d.wait(stateDir)
 	}
 	if !ok {
-		fmt.Fprintln(out, notStartedLine)
+		fmt.Fprintln(out, notStartedLine())
 		return 1
 	}
 
@@ -243,8 +247,7 @@ func keptKind(sc serviceControl, stateDir, user string, desktop bool) bool {
 
 // launches reports whether a run of the default command is the launcher:
 // not the service itself, not the demo, not asked to stay in the
-// foreground, and not started by systemd, which marks what it starts with
-// INVOCATION_ID.
-func launches(opts serveOptions, invocationID string) bool {
-	return !opts.Service && !opts.Demo && !opts.Foreground && invocationID == ""
+// foreground, and not started by the system's service manager.
+func launches(opts serveOptions, startedBySystem bool) bool {
+	return !opts.Service && !opts.Demo && !opts.Foreground && !startedBySystem
 }

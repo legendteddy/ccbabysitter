@@ -114,7 +114,7 @@ func TestLauncherOnAServerLingersAndOpensNothing(t *testing.T) {
 	f := okService()
 	d := &fakeDeps{view: desktopView()}
 	var out strings.Builder
-	if rc := runLauncher(&out, f, dir, launchOptions{Headless: true}, d.deps(answeringAt(pageAt))); rc != 0 {
+	if rc := runLauncher(&out, f, dir, launchOptions{Headless: true, Server: true}, d.deps(answeringAt(pageAt))); rc != 0 {
 		t.Fatalf("rc %d", rc)
 	}
 	if !f.did("write server") || !f.did("linger on") || len(d.opened) != 0 {
@@ -197,7 +197,7 @@ func TestLauncherSaysWhenTheCopyNeverAnswers(t *testing.T) {
 	f := okService()
 	f.installed, f.active = true, true
 	var out strings.Builder
-	if rc := runLauncher(&out, f, keyedDir(t), launchOptions{}, (&fakeDeps{}).deps(neverAnswering)); rc != 1 || out.String() != "CC Babysitter did not start. See: journalctl --user -u ccbabysitter\n" {
+	if rc := runLauncher(&out, f, keyedDir(t), launchOptions{}, (&fakeDeps{}).deps(neverAnswering)); rc != 1 || out.String() != notStartedLine()+"\n" {
 		t.Fatalf("rc %d, out %q", rc, out.String())
 	}
 }
@@ -310,7 +310,7 @@ func TestLauncherPageCarriesTheKey(t *testing.T) {
 		return waitForPage(stateDir, time.Second, 10*time.Millisecond, keyedPageState(stateDir))
 	}
 	var out strings.Builder
-	if rc := runLauncher(&out, f, dir, launchOptions{Headless: true}, (&fakeDeps{view: desktopView()}).deps(wait)); rc != 0 {
+	if rc := runLauncher(&out, f, dir, launchOptions{Headless: true, Server: true}, (&fakeDeps{view: desktopView()}).deps(wait)); rc != 0 {
 		t.Fatalf("rc %d, out %q", rc, out.String())
 	}
 	if want := "then open " + ts.URL + "/?token=" + key + " in its browser"; !strings.Contains(out.String(), want) {
@@ -320,19 +320,19 @@ func TestLauncherPageCarriesTheKey(t *testing.T) {
 
 func TestLaunches(t *testing.T) {
 	for _, c := range []struct {
-		name string
-		opts serveOptions
-		inv  string
-		want bool
+		name   string
+		opts   serveOptions
+		system bool
+		want   bool
 	}{
-		{"plain", serveOptions{}, "", true},
-		{"--no-open", serveOptions{NoOpen: true}, "", true},
-		{"--foreground", serveOptions{Foreground: true}, "", false},
-		{"--demo", serveOptions{Demo: true}, "", false},
-		{"--service", serveOptions{Service: true}, "", false},
-		{"started by systemd", serveOptions{}, "4d1c0a5b", false},
+		{"plain", serveOptions{}, false, true},
+		{"--no-open", serveOptions{NoOpen: true}, false, true},
+		{"--foreground", serveOptions{Foreground: true}, false, false},
+		{"--demo", serveOptions{Demo: true}, false, false},
+		{"--service", serveOptions{Service: true}, false, false},
+		{"started by the service manager", serveOptions{}, true, false},
 	} {
-		if got := launches(c.opts, c.inv); got != c.want {
+		if got := launches(c.opts, c.system); got != c.want {
 			t.Errorf("%s: %v", c.name, got)
 		}
 	}
@@ -371,7 +371,7 @@ func TestLauncherOverSSHKeepsADesktopUnit(t *testing.T) {
 	f := okService()
 	f.installed, f.active, f.unitKnown, f.unitDesktop = true, true, true, true
 	var out strings.Builder
-	if rc := runLauncher(&out, f, dir, launchOptions{Headless: true}, (&fakeDeps{view: desktopView()}).deps(answeringAt(pageAt))); rc != 0 {
+	if rc := runLauncher(&out, f, dir, launchOptions{Headless: true, Server: true}, (&fakeDeps{view: desktopView()}).deps(answeringAt(pageAt))); rc != 0 {
 		t.Fatalf("rc %d", rc)
 	}
 	if !f.did("refresh desktop") || f.did("refresh server") || f.did("linger on") || f.did("restart") {
@@ -391,5 +391,18 @@ func TestLauncherMovesAnOldDesktopUnitToTheGraphicalSession(t *testing.T) {
 	}
 	if !f.did("refresh desktop") {
 		t.Fatalf("calls %q", f.calls)
+	}
+}
+
+// A Mac reached over ssh is headless for the banner and the browser, but
+// its LaunchAgent is a desktop's: no lingering, and it starts at login.
+func TestLauncherHeadlessIsNotAServer(t *testing.T) {
+	f := okService()
+	var out strings.Builder
+	if rc := runLauncher(&out, f, keyedDir(t), launchOptions{Headless: true}, (&fakeDeps{view: desktopView()}).deps(answeringAt(pageAt))); rc != 0 {
+		t.Fatalf("rc %d", rc)
+	}
+	if !f.did("write desktop") || f.did("linger on") || !strings.Contains(out.String(), "ssh -L") || !strings.Contains(out.String(), "when you log in") {
+		t.Fatalf("calls %q\n%s", f.calls, out.String())
 	}
 }

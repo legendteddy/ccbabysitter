@@ -26,9 +26,8 @@ const (
 )
 
 const (
-	noServiceLine  = "Could not set CC Babysitter up as a service here, so it runs only while this terminal stays open."
-	notStartedLine = "CC Babysitter did not start. See: journalctl --user -u ccbabysitter"
-	otherCopyLine  = "CC Babysitter is already running in another terminal. Quit it there with Ctrl+C, then run ccbabysitter again."
+	noServiceLine = "Could not set CC Babysitter up as a service here, so it runs only while this terminal stays open."
+	otherCopyLine = "CC Babysitter is already running in another terminal. Quit it there with Ctrl+C, then run ccbabysitter again."
 )
 
 // serviceControl is the systemd user unit, and the user's lingering, as
@@ -167,3 +166,7 @@ func pageState(pageURL, key string) (version string, ok bool) {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return view.Version, true
 }
+
+// foregroundHint is how to run CC Babysitter after uninstall without a
+// plain run setting the service up again.
+const foregroundHint = "To run CC Babysitter only while a terminal stays open, start it with: ccbabysitter --foreground"
