@@ -270,6 +270,24 @@ func (c *Client) Stop(ctx context.Context, id string) (supervise.Result, error) 
 	return c.action(ctx, id, "stop", nil)
 }
 
+// olderCopyQuit is quit's refusal when the running copy is from before
+// quit existed, which answers the route with a plain 404 or 405.
+const olderCopyQuit = "The running CC Babysitter is an older version that cannot quit this way. Quit it with Ctrl+C in its window. If it was started at login, stop it on Linux with: systemctl --user stop ccbabysitter, on macOS with: launchctl bootout gui/$(id -u)/com.ccbabysitter, or on Windows by ending ccbabysitter.exe in Task Manager."
+
+// Quit asks the running copy to quit. Babysat sessions keep running. A
+// copy from before quit existed has answered, so it is running: it gets a
+// refusal that says how to quit it, not "not running".
+func (c *Client) Quit(ctx context.Context) (supervise.Result, error) {
+	status, data, err := c.send(ctx, c.actionTimeout, http.MethodPost, "/api/quit?via=cli", struct{}{})
+	if err != nil {
+		return supervise.Result{}, err
+	}
+	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+		return supervise.Result{Message: olderCopyQuit}, nil
+	}
+	return result(status, data)
+}
+
 // Activity is the Activity panel, newest first, at most n entries.
 func (c *Client) Activity(ctx context.Context, n int) ([]state.Entry, error) {
 	status, data, err := c.send(ctx, c.viewTimeout, http.MethodGet, fmt.Sprintf("/api/activity?n=%d", n), nil)

@@ -27,8 +27,8 @@ func TestEveryCommandInTheUsageHasHelp(t *testing.T) {
 			t.Errorf("no help page for %s", f[1])
 		}
 	}
-	if seen != 14 {
-		t.Errorf("found %d commands in the usage, want 14", seen)
+	if seen != 15 {
+		t.Errorf("found %d commands in the usage, want 15", seen)
 	}
 }
 
@@ -49,7 +49,7 @@ var longUsageLines = []string{"  ccbabysitter                 start CC Babysitte
 func TestHelpLinesFitAndAreASCII(t *testing.T) {
 	var all bytes.Buffer
 	printUsage(&all)
-	for _, name := range []string{"status", "list", "show", "babysit", "unbabysit", "retry", "stop", "activity", "settings", "install", "uninstall", "reset", "version", "help"} {
+	for _, name := range []string{"status", "list", "show", "babysit", "unbabysit", "retry", "stop", "activity", "settings", "quit", "install", "uninstall", "reset", "version", "help"} {
 		printCommandHelp(&all, name)
 	}
 	for _, line := range strings.Split(all.String(), "\n") {
@@ -72,7 +72,7 @@ func TestHelpLinesFitAndAreASCII(t *testing.T) {
 func TestEveryExampleParses(t *testing.T) {
 	var all bytes.Buffer
 	printUsage(&all)
-	for _, name := range []string{"status", "list", "show", "babysit", "unbabysit", "retry", "stop", "activity", "settings"} {
+	for _, name := range []string{"status", "list", "show", "babysit", "unbabysit", "retry", "stop", "activity", "settings", "quit"} {
 		printCommandHelp(&all, name)
 	}
 	inExamples := false
@@ -208,5 +208,15 @@ func TestHelpStatesHowASessionWordIsRead(t *testing.T) {
 		if !strings.Contains(flat, "A full id always wins. A word that fits two sessions, as a short id or a name, is refused") {
 			t.Errorf("%s page does not state the order", name)
 		}
+	}
+}
+
+// quit's refusal, as from an older running copy, is the action refusal
+// document, which the page states.
+func TestQuitHelpStatesItsRefusal(t *testing.T) {
+	var b bytes.Buffer
+	printCommandHelp(&b, "quit")
+	if !strings.Contains(b.String(), "ok is false when it was refused, with exit code 1 and the reason in message.") {
+		t.Fatalf("help quit:\n%s", b.String())
 	}
 }

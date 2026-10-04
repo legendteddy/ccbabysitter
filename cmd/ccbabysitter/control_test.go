@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"ccbabysitter.dev/ccbabysitter/internal/claude"
 	"ccbabysitter.dev/ccbabysitter/internal/client"
@@ -552,7 +553,7 @@ func TestWrongKeyIsNoKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "This needs the page's key. Open the address CC Babysitter printed, or run ccbabysitter status."
-	for _, args := range [][]string{{"status"}, {"list"}, {"babysit", "api"}, {"activity"}, {"settings", "theme", "dark"}} {
+	for _, args := range [][]string{{"status"}, {"list"}, {"babysit", "api"}, {"activity"}, {"settings", "theme", "dark"}, {"quit"}} {
 		code, out, errOut := runCmd(t, env, append(args, "--json")...)
 		doc := oneJSON(t, out)
 		if code != 1 || doc["code"] != "no-key" || doc["error"] != want || !strings.Contains(errOut, want) {
@@ -582,12 +583,108 @@ func TestStaleAddressIsNotRunningAndGetsNoKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := controlEnv{stateDir: dir, self: func(supervise.View) (int, bool) { return 0, false }}
-	for _, args := range [][]string{{"status"}, {"list"}, {"babysit", "api"}, {"activity"}} {
+	for _, args := range [][]string{{"status"}, {"list"}, {"babysit", "api"}, {"activity"}, {"quit"}} {
 		if code, _, errOut := runCmd(t, env, args...); code != 3 || !strings.Contains(errOut, "not running") {
 			t.Errorf("%v = %d %q", args, code, errOut)
 		}
 	}
 	if len(seen) != 0 {
 		t.Fatalf("the saved address was asked: %q", seen)
+	}
+}
+
+// testEnvWithQuit is testEnv with a quit hook on the server, which reports
+// each call on the returned channel.
+func testEnvWithQuit(t *testing.T) (controlEnv, chan struct{}) {
+	t.Helper()
+	dir := t.TempDir()
+	log, err := state.NewLog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := state.PageKey(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := web.NewServer(&ctlEngine{view: ctlView(), log: log}, log, "0.4.0", key)
+	quits := make(chan struct{}, 1)
+	srv.OnQuit(func() { quits <- struct{}{} })
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	if err := state.SavePageURL(dir, ts.URL); err != nil {
+		t.Fatal(err)
+	}
+	holdLock(t, dir)
+	return controlEnv{stateDir: dir}, quits
+}
+
+func TestQuitAsksTheRunningCopyToQuit(t *testing.T) {
+	env, quits := testEnvWithQuit(t)
+	code, out, _ := runCmd(t, env, "quit")
+	if code != 0 || !strings.Contains(out, "CC Babysitter is quitting.") {
+		t.Fatalf("quit = %d %q", code, out)
+	}
+	select {
+	case <-quits:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the running copy was not asked to quit")
+	}
+
+	env, _ = testEnvWithQuit(t)
+	code, out, _ = runCmd(t, env, "quit", "--json")
+	if doc := oneJSON(t, out); code != 0 || doc["ok"] != true || doc["schema"] != float64(1) {
+		t.Fatalf("quit --json = %d %v", code, doc)
+	}
+}
+
+func TestQuitTakesNoWords(t *testing.T) {
+	env, quits := testEnvWithQuit(t)
+	if code, _, errOut := runCmd(t, env, "quit", "now"); code != 2 || !strings.Contains(errOut, "quit takes no words") {
+		t.Fatalf("quit now = %d %q", code, errOut)
+	}
+	if len(quits) != 0 {
+		t.Fatal("a usage error asked the copy to quit")
+	}
+}
+
+func TestQuitWhenNotRunningIsExit3(t *testing.T) {
+	env := controlEnv{stateDir: t.TempDir()}
+	if code, _, _ := runCmd(t, env, "quit"); code != 3 {
+		t.Fatalf("quit with nothing running = %d, want 3", code)
+	}
+}
+
+// A running copy from before quit existed answers /api/quit with a plain
+// 404. That copy is running, so quit must not say it is not: it says the
+// running copy is too old to quit this way and how to quit it instead.
+func TestQuitAgainstAnOlderCopySaysHowToQuitIt(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/quit" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"version":"0.4.2"}`))
+	}))
+	t.Cleanup(ts.Close)
+	dir := t.TempDir()
+	if _, err := state.PageKey(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SavePageURL(dir, ts.URL); err != nil {
+		t.Fatal(err)
+	}
+	holdLock(t, dir)
+	env := controlEnv{stateDir: dir}
+
+	code, _, errOut := runCmd(t, env, "quit")
+	// A copy started at login has no window to press Ctrl+C in: the answer
+	// names how to stop it on each system too.
+	if code != 1 || strings.Contains(errOut, "not running") || !strings.Contains(errOut, "older version") || !strings.Contains(errOut, "Ctrl+C") ||
+		!strings.Contains(errOut, "systemctl --user stop ccbabysitter") || !strings.Contains(errOut, "launchctl bootout gui/") || !strings.Contains(errOut, "Task Manager") {
+		t.Fatalf("quit against an older copy = %d %q", code, errOut)
+	}
+	code, out, _ := runCmd(t, env, "quit", "--json")
+	if doc := oneJSON(t, out); code != 1 || doc["ok"] != false {
+		t.Fatalf("quit --json against an older copy = %d %v", code, doc)
 	}
 }
