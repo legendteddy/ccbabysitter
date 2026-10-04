@@ -40,6 +40,12 @@ type serveOptions struct {
 	NoOpen bool
 	Demo   bool
 	Port   int
+	// Foreground keeps a plain run serving in this terminal instead of
+	// handing CC Babysitter to the system's service manager.
+	Foreground bool
+	// PortSet is whether --port was given, which only a run that serves in
+	// this terminal can use.
+	PortSet bool
 	// Service is set when the systemd unit runs this copy, or anything else
 	// whose output goes to the systemd journal. Its output goes
 	// to the journal, which other accounts may be able to read and which
@@ -312,6 +318,11 @@ func serve(ctx context.Context, opts serveOptions, stdout io.Writer) int {
 		return 1
 	}
 	log.Info("", fmt.Sprintf("%s %s start, pid %d, state %s", buildinfo.Name, version, os.Getpid(), stateDir))
+	if opts.Service {
+		// Why this background copy started: the launcher's note when it
+		// started it, otherwise the system at login or boot.
+		log.Info("", startedReason(state.TakeStartReason(stateDir), hosts.Headless()))
+	}
 
 	// The page's access key, which every request must carry. A demo has its
 	// own temporary folder, and so its own key.
@@ -470,7 +481,11 @@ func serve(ctx context.Context, opts serveOptions, stdout io.Writer) int {
 	if opts.Service {
 		shown = pageURL
 	}
-	fmt.Fprint(stdout, banner(version, shown, env.Headless, sshUser, sshAddress, env.CLIVersion, env.DesktopVersion, env.VSCodeExtVersion))
+	closing := foregroundClosing
+	if opts.Service {
+		closing = serviceClosing
+	}
+	fmt.Fprint(stdout, banner(version, shown, env.Headless, sshUser, sshAddress, env.CLIVersion, env.DesktopVersion, env.VSCodeExtVersion, closing))
 
 	if shouldOpenBrowser(opts.NoOpen, env.Headless, settings.AutoOpenBrowser) {
 		if err := openInBrowser(srv, pageURL, openBrowser); err != nil {

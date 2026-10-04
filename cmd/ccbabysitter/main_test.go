@@ -63,7 +63,7 @@ func TestUsageSaysPageWithoutParentheses(t *testing.T) {
 		t.Fatalf("no parentheses or semicolons in the usage:\n%s", out)
 	}
 	for _, want := range []string{"the page", "by default", "47391", "random free port",
-		"start CC Babysitter. On a Linux server, set it up as a service that starts at boot"} {
+		"start CC Babysitter. On Linux it runs in the background and starts at login", "--foreground"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in\n%s", want, out)
 		}
@@ -115,6 +115,12 @@ func TestParseServeFlags(t *testing.T) {
 	}
 	if _, err := parseServeFlags([]string{"--no-open", "extra"}, false); err == nil {
 		t.Fatal("a stray argument is refused")
+	}
+	if opts, _ := parseServeFlags([]string{"--foreground"}, false); !opts.Foreground || opts.PortSet {
+		t.Fatalf("--foreground: %+v", opts)
+	}
+	if opts, _ := parseServeFlags([]string{"--port", "5000"}, false); !opts.PortSet || opts.Port != 5000 {
+		t.Fatalf("--port: %+v", opts)
 	}
 }
 
