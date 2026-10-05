@@ -73,7 +73,7 @@ go install ccbabysitter.dev/ccbabysitter/cmd/ccbabysitter@latest
 ### Desktop
 
 1. Install with the one-line command for your system, under Install above.
-2. Run the command the installer printed, usually `ccbabysitter`. Its page opens in your browser. The page's address includes a key that only your account can read, and `ccbabysitter status` shows that address again. CC Babysitter then runs in the background, starts again when you log in, and gives the terminal back.
+2. Run the command the installer printed, usually `ccbabysitter`. Its page opens in your browser. The page's address includes a key that only your account can read, and `ccbabysitter status` shows that address again. The page `ccbabysitter` opens for you stays signed in until CC Babysitter restarts, after an update or a restart of the computer; run `ccbabysitter` again to open it. CC Babysitter then runs in the background, starts again when you log in, and gives the terminal back.
 3. Switch Remote Control on in the session you want to keep: `/rc` in a terminal, or the switch in Claude Desktop or VS Code. Then press Babysit on its card.
 4. Walk away. If the app dies, the session carries on in the background. Reach it from the Claude app on your phone.
 
@@ -119,7 +119,7 @@ On a server with no display the same page is the session manager. A plain `ccbab
 - Tells you how to switch Remote Control on when it is off. Nothing outside a session can switch it on.
 - If the session's app closes, starts the session again as a background session with Remote Control, under the same id, with `claude --bg --resume`.
 - Lets you unbabysit while the session is still in its own app. Once the background copy carries it, you stop the copy instead with `claude stop`, which keeps the conversation.
-- Says before you babysit when a background copy could not start: the Claude Code CLI must trust the folder, so run `claude` there once, and it never starts in your home folder.
+- Says before you babysit when a background copy could not start, with the command that fixes it: the Claude Code CLI must trust the folder, and inside a git repository it takes that trust only from the repository's own folder, though the desktop app also accepts a trusted folder above it; it never starts in your home folder.
 - Offers, in the same dialog, to start CC Babysitter at login so the promise survives a restart, when that is off. A plain `ccbabysitter` turns it on the first time it starts CC Babysitter in the background, also when you upgrade, as Start at login below says.
 - Stops babysitting a session that ended before anything was said in it, and says so in Activity: Claude saves a conversation only after the first message, so there is nothing to bring back.
 - Waits 90 seconds after it starts on a machine with a display before starting anything in the background, so apps that restore their own sessions at login, Claude Desktop in particular, go first.
@@ -176,7 +176,7 @@ Every login entry points at the program where it is at that moment, so keep the 
 
 ## Uninstall
 
-`ccbabysitter reset` deletes the state folder after asking, and refuses while CC Babysitter is still running, so quit it first. Run the steps for your system in this order.
+`ccbabysitter uninstall` on its own leaves the state folder, but a later plain `ccbabysitter` turns start at login on again, as on a machine that never had CC Babysitter. `ccbabysitter reset` deletes the state folder after asking, and refuses while CC Babysitter is still running, so quit it first. Run the steps for your system in this order.
 
 macOS:
 
