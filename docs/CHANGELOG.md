@@ -2,6 +2,12 @@
 
 Versions follow MAJOR.MINOR.PATCH, with a pre-release such as 0.5.0-rc.1 published as MAJOR.MINOR.PATCH-<pre> under a heading of the same name. Patch for fixes with no visible change, minor for new or visibly changed behaviour, major when the state file or a flow changes so that old state is no longer valid. Bump when a build is handed out or put into use, not on every edit. Changes merged since the last release are listed under Unreleased until the next one.
 
+## Unreleased
+
+- Fixed: the warning that a session would not come back showed for a session in a git worktree whose folder the claude CLI trusts through a folder above it, and could not be cleared. A worktree takes its trust from any folder above it; only a repository with a .git folder stops at its own folder.
+- Fixed: on a Mac, the install script started CC Babysitter again after you had quit it, without opening the page. It now restarts it only when it runs in the background, as on Linux and Windows, and otherwise says how to start it.
+- Fixed: after replacing an earlier version's login item, such as the Startup folder script on Windows, Activity said "Start at login was turned on outside CC Babysitter." It now says "Start at login kept on: CC Babysitter rewrote its login entry."
+
 ## 0.5.0 (2026-10-05)
 
 CC Babysitter now runs in the background on Linux, macOS and Windows and starts again when you log in, so you can close the terminal you started it from.

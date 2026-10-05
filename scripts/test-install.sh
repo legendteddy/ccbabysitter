@@ -685,8 +685,9 @@ case_linux_desktop_running_older() {
 	expect_clean
 }
 
-# A Mac with an earlier version's LaunchAgent that is not running: a plain
-# run rewrites it for the new version, so the next login starts it right.
+# A Mac whose LaunchAgent is not running, because it was quit or never
+# started: the script does not start it, and says how to. An earlier
+# version's plist is still taken care of at the next login.
 case_mac_agent_stopped() {
 	new_case mac-agent-stopped
 	shim_uname Darwin arm64
@@ -694,13 +695,30 @@ case_mac_agent_stopped() {
 	: >"$c/home/Library/LaunchAgents/com.ccbabysitter.plist"
 	run_install CCBABYSITTER_DOWNLOAD_URL="$url/fake"
 	expect_status 0
-	expect_fake_calls "argc=1 args=version;argc=2 args=help quit stdin=0;argc=1 args=--no-open stdin=0;"
+	expect_fake_calls "argc=1 args=version;"
+	expect_out "Start it with:"
+	expect_clean
+}
+
+# A Mac whose LaunchAgent is still loaded but was quit, so launchd says it
+# is not running: the case that started a quit copy again. The script
+# leaves it and says how to start it.
+case_mac_agent_quit() {
+	new_case mac-agent-quit
+	shim_uname Darwin arm64
+	shim_launchctl "not running"
+	mkdir -p "$c/home/Library/LaunchAgents"
+	: >"$c/home/Library/LaunchAgents/com.ccbabysitter.plist"
+	run_install CCBABYSITTER_DOWNLOAD_URL="$url/fake"
+	expect_status 0
+	expect_fake_calls "argc=1 args=version;"
+	expect_out "Start it with:"
 	expect_clean
 }
 
 # A Mac with an earlier version's LaunchAgent whose copy runs in a
-# terminal instead: a plain run would only refuse, so the script leaves it
-# and says to quit and start it, and the install itself succeeds.
+# terminal instead: the agent is not running, so the script leaves it and
+# says to quit and start it, and the install itself succeeds.
 case_mac_terminal_copy() {
 	new_case mac-terminal-copy
 	shim_uname Darwin arm64
@@ -709,7 +727,7 @@ case_mac_terminal_copy() {
 	: >"$c/home/Library/LaunchAgents/com.ccbabysitter.plist"
 	run_install CCBABYSITTER_DOWNLOAD_URL="$url/fake"
 	expect_status 0
-	expect_fake_calls "argc=1 args=version;argc=2 args=help quit stdin=0;"
+	expect_fake_calls "argc=1 args=version;"
 	expect_out "CC Babysitter is already running. Quit it and start it again to use the new version."
 	expect_clean
 }
@@ -863,7 +881,7 @@ for t in case_default_dir case_hint_bash case_hint_sh case_hint_fish case_hint_o
 	case_linux_no_display case_linux_ssh case_linux_ssh_tty case_linux_no_opener \
 	case_linux_no_user_manager case_linux_no_systemctl case_linux_invocation_id \
 	case_stdin_pipe case_stdin_pipe_service case_stdin_redirect \
-	case_linux_desktop case_linux_desktop_running case_linux_desktop_running_older case_mac_running case_mac_agent_stopped case_mac_terminal_copy case_mac_ssh case_default_url case_fallbacks case_relative_dir \
+	case_linux_desktop case_linux_desktop_running case_linux_desktop_running_older case_mac_running case_mac_agent_stopped case_mac_agent_quit case_mac_terminal_copy case_mac_ssh case_default_url case_fallbacks case_relative_dir \
 	case_no_home case_cut_short; do
 	check "$t"
 done

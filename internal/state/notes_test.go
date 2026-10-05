@@ -68,3 +68,20 @@ func TestForgetLoginStartOffered(t *testing.T) {
 		t.Fatalf("still offered after forgetting: %v", err)
 	}
 }
+
+// The launcher's note about a login item it wrote itself is read once.
+func TestLoginItemNote(t *testing.T) {
+	dir := t.TempDir()
+	if got := TakeLoginItemNote(dir); got != "" {
+		t.Fatalf("a note in an empty folder: %q", got)
+	}
+	if err := WriteLoginItemNote(dir, "Start at login kept on: CC Babysitter rewrote its login entry."); err != nil {
+		t.Fatal(err)
+	}
+	if got := TakeLoginItemNote(dir); got != "Start at login kept on: CC Babysitter rewrote its login entry." {
+		t.Fatalf("took %q", got)
+	}
+	if got := TakeLoginItemNote(dir); got != "" {
+		t.Fatalf("taking the note leaves it there: %q", got)
+	}
+}

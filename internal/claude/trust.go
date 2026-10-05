@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -29,19 +30,23 @@ type Trust struct {
 }
 
 // Trusted reports whether the Claude Code CLI trusts dir: dir or a folder
-// above it is trusted, but inside a git repository only up to the
-// repository's own folder. The CLI does not take trust from a folder above
-// a repository, though the desktop app does, so a session the desktop app
-// runs happily can still be refused a background copy. known is false
-// when the settings file could not be read, and then nothing is claimed
-// either way. Finding the repository looks for a .git file or folder; the
-// settings file is never touched.
+// above it is trusted, but inside a git repository, one whose .git is a
+// folder, only up to the repository's own folder. The CLI does not take
+// trust from a folder above a repository, though the desktop app does, so
+// a session the desktop app runs happily can still be refused a background
+// copy. A worktree, whose .git is a file, does take trust from any folder
+// above it. known is false when the settings file could not be read, and
+// then nothing is claimed either way. Finding the repository looks for
+// .git; the settings file is never touched.
 func (t Trust) Trusted(dir string) (trusted, known bool) {
 	if !t.ok {
 		return false, false
 	}
 	p := filepath.Clean(dir)
-	repo := repositoryOf(p)
+	repo, main := repositoryOf(p)
+	if main != "" && t.trusted[filepath.ToSlash(main)] {
+		return true, true
+	}
 	for {
 		if t.trusted[filepath.ToSlash(p)] {
 			return true, true
@@ -54,20 +59,52 @@ func (t Trust) Trusted(dir string) (trusted, known bool) {
 	}
 }
 
-// repositoryOf is the folder of the git repository dir is in, the nearest
-// folder at or above it holding .git, a folder in a repository and a file
-// in a worktree, or "" outside any.
-func repositoryOf(dir string) string {
+// repositoryOf finds the git repository dir is in. repo is where the trust
+// walk stops: the nearest folder at or above dir holding .git, when that
+// .git is a folder. When the nearest .git is a file, dir is in a worktree,
+// which takes its trust from any folder above it, so repo is "", as it is
+// outside any repository; main is then the worktree's main repository,
+// read from the file's gitdir line, whose trust a worktree takes too, or ""
+// when the line cannot be read.
+func repositoryOf(dir string) (repo, main string) {
 	for p := dir; ; {
-		if _, err := os.Lstat(filepath.Join(p, ".git")); err == nil {
-			return p
+		gitPath := filepath.Join(p, ".git")
+		if info, err := os.Stat(gitPath); err == nil {
+			if info.IsDir() {
+				return p, ""
+			}
+			return "", mainRepository(gitPath)
 		}
 		parent := filepath.Dir(p)
 		if parent == p {
-			return ""
+			return "", ""
 		}
 		p = parent
 	}
+}
+
+// mainRepository reads a worktree's .git file, "gitdir: <repo>/.git/worktrees/<name>",
+// and gives <repo>, or "" for anything else. Only the first line, and at
+// most a small file, is read.
+func mainRepository(gitFile string) string {
+	f, err := os.Open(gitFile)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	buf := make([]byte, 4096)
+	n, _ := io.ReadFull(f, buf)
+	line, _, _ := strings.Cut(string(buf[:n]), "\n")
+	gitdir, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
+	if !ok {
+		return ""
+	}
+	gitdir = filepath.Clean(strings.TrimSpace(gitdir))
+	worktrees := filepath.Dir(gitdir)
+	if filepath.Base(worktrees) != "worktrees" || filepath.Base(filepath.Dir(worktrees)) != ".git" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(worktrees))
 }
 
 // TrustFile answers whether the Claude Code CLI trusts a folder, which a

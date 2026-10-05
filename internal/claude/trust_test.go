@@ -119,22 +119,29 @@ func TestTrustIsAValueThatNeedsNoFile(t *testing.T) {
 	}
 }
 
-// Inside a git repository the Claude Code CLI counts trust only from the
-// folder up to the repository's own folder, never from a folder above it,
-// though the desktop app does. A worktree, whose .git is a file, is a
-// repository of its own. Outside any repository every folder above counts.
+// Inside a git repository, one whose .git is a folder, the Claude Code CLI
+// counts trust only from the folder up to the repository's own folder,
+// never from a folder above it, though the desktop app does. A worktree,
+// whose .git is a file, takes trust from any folder above it, wherever the
+// worktree lives: the nearest .git decides. Outside any repository every folder above counts. The
+// two real cases this follows: a repository in a trusted folder that the
+// CLI refused to start a session in, and a worktree in a trusted folder
+// where the CLI asked nothing. A worktree also takes its main repository's
+// trust: that only ever removes a warning, never adds one.
 func TestTrustStopsAtTheRepository(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "source")
 	repo := filepath.Join(src, "repo")
-	worktree := filepath.Join(repo, ".claude", "worktrees", "wt")
+	inner := filepath.Join(repo, ".claude", "worktrees", "wt")
+	outside := filepath.Join(src, "worktrees", "ui-ticket")
 	plain := filepath.Join(src, "plain", "sub")
-	for _, d := range []string{filepath.Join(repo, ".git"), worktree, filepath.Join(repo, "pkg", "deep"), plain} {
+	for _, d := range []string{filepath.Join(repo, ".git"), inner, outside, filepath.Join(repo, "pkg", "deep"), plain} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	writeConfig(t, filepath.Join(worktree, ".git"), "gitdir: "+filepath.Join(repo, ".git", "worktrees", "wt")+"\n")
+	writeConfig(t, filepath.Join(inner, ".git"), "gitdir: "+filepath.Join(repo, ".git", "worktrees", "wt")+"\n")
+	writeConfig(t, filepath.Join(outside, ".git"), "gitdir: "+filepath.Join(repo, ".git", "worktrees", "ui-ticket")+"\n")
 	config := func(trusted ...string) Trust {
 		body := `{"projects":{`
 		for i, d := range trusted {
@@ -157,13 +164,40 @@ func TestTrustStopsAtTheRepository(t *testing.T) {
 		{"a folder above, asked from inside", config(src), filepath.Join(repo, "pkg", "deep"), false},
 		{"the repository itself", config(repo), repo, true},
 		{"the repository, asked from inside", config(repo), filepath.Join(repo, "pkg", "deep"), true},
-		{"a worktree under a trusted repository", config(repo), worktree, false},
-		{"a trusted worktree", config(worktree), worktree, true},
+		{"a worktree outside the repository, in a trusted folder", config(src), outside, true},
+		{"a worktree inside a trusted repository", config(repo), inner, true},
+		{"a worktree inside a repository, in a trusted folder", config(src), inner, true},
+		{"a trusted worktree", config(inner), inner, true},
+		{"a worktree nothing above trusts", config(plain), outside, false},
+		{"a worktree outside its trusted repository", config(repo), outside, true},
 		{"no repository, a folder above", config(src), plain, true},
 	}
 	for _, c := range cases {
 		if trusted, known := c.trust.Trusted(c.dir); !known || trusted != c.trusted {
 			t.Errorf("%s: trusted=%v known=%v, want %v", c.name, trusted, known, c.trusted)
 		}
+	}
+}
+
+// Only a worktree's gitdir line names a main repository; anything else in a
+// .git file names none, and nothing is trusted on its account.
+func TestMainRepository(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repos", "ui")
+	cases := map[string]string{
+		"gitdir: " + filepath.ToSlash(filepath.Join(repo, ".git", "worktrees", "x")) + "\n": repo,
+		"gitdir: " + filepath.Join(repo, ".git", "modules", "sub") + "\n":                   "",
+		"not a gitdir line\n": "",
+		"":                    "",
+	}
+	for body, want := range cases {
+		f := filepath.Join(t.TempDir(), ".git")
+		writeConfig(t, f, body)
+		if got := mainRepository(f); got != want {
+			t.Errorf("%q: got %q, want %q", body, got, want)
+		}
+	}
+	if got := mainRepository(filepath.Join(dir, "missing")); got != "" {
+		t.Errorf("a missing file names %q", got)
 	}
 }
