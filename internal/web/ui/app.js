@@ -483,12 +483,21 @@
     renderInfo(view);
 
     var watches = (view.watches || []).filter(function (w) { return matches(w.name, w.cwd, w.shortId); });
-    var sessions = (view.sessions || []).filter(function (s) { return matches(s.name, s.cwd, s.shortId); });
+    var listed = (view.sessions || []).filter(function (s) { return matches(s.name, s.cwd, s.shortId); });
+    /* Scheduled task runs are never babysat, so they are listed apart, in
+       a section that only shows when there is one. */
+    var sessions = listed.filter(function (s) { return !s.scheduledTask; });
+    var scheduled = listed.filter(function (s) { return !!s.scheduledTask; });
     var past = (view.notRunning || []).filter(function (p) { return matches(p.name, p.cwd, p.shortId); });
 
     renderBabysatEmpty(view, view.watches || [], watches);
     section("#running-count", "#sessions-empty", sessions.length);
+    if (!state.search && sessions.length === 0 && scheduled.length > 0) {
+      setText($("#sessions-empty"), "Only scheduled task runs are running.");
+    }
     section("#past-count", "#past-empty", past.length);
+    show($("#sect-scheduled"), scheduled.length > 0);
+    setText($("#scheduled-count"), String(scheduled.length));
     /* The section stays as the person left it, closed at first, and its
        header says when something in it was just handed back. */
     var handed = handedBackCount(past);
@@ -498,6 +507,8 @@
     sync($("#watches"), watches, function (w) { return w.sessionId; },
       function () { return clone("#tpl-watch"); }, fillWatch);
     sync($("#sessions"), sessions, function (s) { return s.id; },
+      function () { return clone("#tpl-session"); }, fillSession);
+    sync($("#scheduled"), scheduled, function (s) { return s.id; },
       function () { return clone("#tpl-session"); }, fillSession);
     sync($("#past"), past, function (p) { return p.id; },
       function () { return clone("#tpl-past"); }, fillPast);
@@ -539,9 +550,11 @@
      Control on from the start. */
   var START_CMD = "claude --bg --remote-control";
 
-  /* canBabysit is the rule a Running row follows for showing its buttons,
-     Babysit among them: every session but one another program owns. */
-  function canBabysit(s) { return !!s.actionable; }
+  /* canBabysit is the rule a row follows for showing its Babysit button:
+     every session but one another program owns and a scheduled task's run,
+     which Claude Desktop starts again by itself. A row's other buttons
+     follow only whether another program owns the session. */
+  function canBabysit(s) { return !!s.actionable && !s.scheduledTask; }
 
   /* heroSteps is what the empty hero asks the person to do next, which
      follows what is running: press Babysit when there is something to
@@ -798,12 +811,16 @@
     var multi = f(node, "multi");
     show(multi, live.length > 1);
     setText(multi, live.length > 1 ? "open in " + live.length + " apps" : "");
+    show(f(node, "sched"), !!s.scheduledTask);
     fillPath(f(node, "cwd"), s.cwd);
     var dot = f(node, "rcdot");
     dot.classList.toggle("on", !!s.remoteControl);
     setTitle(dot, s.remoteControl ? "Remote Control on" : "Remote Control off");
     setText(f(node, "status"), STATUS_WORDS[String(s.status || "").toLowerCase()] || "");
-    show(el(node, "acts"), canBabysit(s));
+    /* The row's buttons show while one of them is wanted, so a run in its
+       own app gets no empty row. */
+    show(el(node, "acts"), !!s.actionable && (canBabysit(s) || !!s.canStop || !!s.attachCmd || !!s.sshAttachCmd));
+    show(node.querySelector('[data-act="babysit"]'), canBabysit(s));
     show(node.querySelector('[data-act="stop"]'), !!s.canStop);
     var attach = node.querySelector('[data-act="copy-attach"]');
     show(attach, !!s.attachCmd);
@@ -1415,14 +1432,18 @@
       if (act === "copy-attach") { copyText(w.attachCmd || ""); }
       if (act === "copy-ssh") { copyText(w.sshAttachCmd || ""); }
     });
-    onAction($("#sessions"), function (act, id) {
+    /* A scheduled task run's row has the same buttons as a Running row,
+       Babysit aside, so both lists answer them the same way. */
+    function onSessionAction(act, id) {
       var s = sessionById(id);
       if (!s) { return; }
       if (act === "babysit") { openBabysit(id); }
       if (act === "stop") { openStop(id); }
       if (act === "copy-attach") { copyText(s.attachCmd || ""); }
       if (act === "copy-ssh") { copyText(s.sshAttachCmd || ""); }
-    });
+    }
+    onAction($("#sessions"), onSessionAction);
+    onAction($("#scheduled"), onSessionAction);
     onAction($("#past"), function (act, id) {
       var p = pastById(id);
       if (!p) { return; }

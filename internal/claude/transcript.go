@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"time"
 )
@@ -24,6 +25,10 @@ type Stats struct {
 	// none, and the page reads it through the name of the session or the
 	// watch rather than here.
 	Title string `json:"-"`
+	// ScheduledTask reports whether the session is a run of a Claude Desktop
+	// scheduled task: its first prompt starts with the <scheduled-task> tag
+	// the app puts there. The views carry it outside Stats.
+	ScheduledTask bool `json:"-"`
 }
 
 // StatsReader accumulates Stats over a transcript file, reading only the
@@ -45,18 +50,26 @@ type StatsReader struct {
 	// after it yet. If the next read finds nothing new at all, it was not
 	// the automatic name, whose agent-name line follows at once.
 	pendingRead bool
+	// prompted is set once the first prompt has been read, which alone
+	// decides whether the session is a scheduled task's run.
+	prompted bool
 }
 
 // transcriptRecord is the subset of one transcript line this reader needs.
-// Content is kept as raw JSON and only ever inspected for its shape, never
-// decoded into text, so conversation content never enters memory as a
-// usable string.
+// Content is kept as raw JSON and only ever inspected for its shape, and
+// the first prompt's first bytes compared with the scheduled-task tag;
+// it is never decoded into text, so conversation content never enters
+// memory as a usable string.
 type transcriptRecord struct {
 	titleRecord
-	Type        string `json:"type"`
-	Timestamp   string `json:"timestamp"`
-	IsMeta      bool   `json:"isMeta"`
-	IsSidechain bool   `json:"isSidechain"`
+	Type      string `json:"type"`
+	Operation string `json:"operation"`
+	// Content is a queued prompt's text, kept raw like the message's, and
+	// only looked at on a queue-operation record.
+	Content     json.RawMessage `json:"content"`
+	Timestamp   string          `json:"timestamp"`
+	IsMeta      bool            `json:"isMeta"`
+	IsSidechain bool            `json:"isSidechain"`
 	Message     struct {
 		ID      string          `json:"id"`
 		Model   string          `json:"model"`
@@ -120,6 +133,7 @@ func (r *StatsReader) reset() {
 	r.seen = nil
 	r.titles = titleTracker{}
 	r.pendingRead = false
+	r.prompted = false
 }
 
 // updateTitle works out the title after a read. A custom-title that ended
@@ -163,6 +177,86 @@ func (r *StatsReader) applyLine(line []byte) {
 	case "user":
 		if isTurn(&rec) {
 			r.stats.Turns++
+		}
+		if !rec.IsMeta && !rec.IsSidechain {
+			r.firstPrompt(rec.Message.Content)
+		}
+	case "queue-operation":
+		if rec.Operation == "enqueue" {
+			r.firstPrompt(rec.Content)
+		}
+	}
+}
+
+// scheduledTaskTag is how Claude Desktop starts the prompt of a scheduled
+// task's run, as it is written in the transcript's JSON.
+var scheduledTaskTag = []byte(`"<scheduled-task `)
+
+// scheduledContentTag is the same tag as the value of a content field, for
+// a first prompt line too long to read whole.
+var scheduledContentTag = []byte(`"content":"<scheduled-task `)
+
+// firstPrompt looks at the session's first prompt, given as raw JSON, and
+// notes whether it is a scheduled task's run. Later prompts change nothing.
+func (r *StatsReader) firstPrompt(content json.RawMessage) {
+	if r.prompted || len(content) == 0 {
+		return
+	}
+	r.prompted = true
+	if isScheduledPrompt(content) {
+		r.stats.ScheduledTask = true
+	}
+}
+
+// isScheduledPrompt reports whether a prompt, given as raw JSON, a string or
+// a list of blocks, starts with the scheduled-task tag. Only its first bytes
+// are compared; the text is never decoded.
+func isScheduledPrompt(content json.RawMessage) bool {
+	raw := bytes.TrimSpace(content)
+	if len(raw) > 0 && raw[0] == '[' {
+		var blocks []struct {
+			Text json.RawMessage `json:"text"`
+		}
+		if json.Unmarshal(raw, &blocks) != nil || len(blocks) == 0 {
+			return false
+		}
+		raw = bytes.TrimSpace(blocks[0].Text)
+	}
+	return bytes.HasPrefix(raw, scheduledTaskTag)
+}
+
+// scheduledRunReadLimit bounds how much of a transcript ScheduledRun reads.
+// The first prompt comes within the first few lines; a transcript whose
+// first prompt is not within this much is taken as an ordinary session.
+const scheduledRunReadLimit = 64 << 10
+
+// ScheduledRun reports whether the transcript at path is a Claude Desktop
+// scheduled task's run, from its first prompt, reading at most
+// scheduledRunReadLimit bytes, so it is cheap enough to ask where a
+// decision is made. ok is false when the file could not be read.
+func ScheduledRun(path string) (run, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, false
+	}
+	defer f.Close()
+	br := bufio.NewReader(io.LimitReader(f, scheduledRunReadLimit))
+	for {
+		line, readErr := br.ReadBytes('\n')
+		if readErr != nil {
+			// A line cut off by the read limit is looked at as far as it
+			// goes: a first prompt that long still starts with the tag.
+			return bytes.Contains(line, scheduledContentTag), true
+		}
+		var rec transcriptRecord
+		if json.Unmarshal(bytes.TrimSpace(line), &rec) != nil {
+			continue
+		}
+		switch {
+		case rec.Type == "user" && !rec.IsMeta && !rec.IsSidechain && len(rec.Message.Content) > 0:
+			return isScheduledPrompt(rec.Message.Content), true
+		case rec.Type == "queue-operation" && rec.Operation == "enqueue" && len(rec.Content) > 0:
+			return isScheduledPrompt(rec.Content), true
 		}
 	}
 }

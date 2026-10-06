@@ -1099,7 +1099,7 @@ func TestTheEmptyBabysatHero(t *testing.T) {
 		`"A babysat session comes back on its own. If its app crashes or closes, it carries on in the background, reachable from your other devices."`,
 		`"A babysat session stays on your remote list. If it stops or the server reboots, it comes back in the background with Remote Control on."`,
 		`var START_CMD = "claude --bg --remote-control";`,
-		`show(el(node, "acts"), canBabysit(s));`,
+		`show(node.querySelector('[data-act="babysit"]'), canBabysit(s));`,
 		`copyText(START_CMD);`,
 	} {
 		if !strings.Contains(app, want) {
@@ -1502,6 +1502,63 @@ func TestThePageCanQuit(t *testing.T) {
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("app.js has no %q", want)
+		}
+	}
+}
+
+// Claude Desktop scheduled task runs are listed apart from the running
+// sessions, in a section of their own that starts folded and only shows
+// when there is a run, and a run never gets a Babysit button nor counts
+// as something to press it on.
+func TestScheduledTaskRunsAreListedApart(t *testing.T) {
+	index := readUI(t, "ui/index.html")
+	for _, want := range []string{
+		`<details class="sect" id="sect-scheduled" hidden>`,
+		`<summary><h2>Scheduled task runs</h2><span class="n" id="scheduled-count">0</span></summary>`,
+		`<div class="rows" id="scheduled"></div>`,
+		`<span class="tag sched" data-f="sched" hidden>Scheduled task</span>`,
+	} {
+		if !strings.Contains(index, want) {
+			t.Errorf("index.html does not contain %s", want)
+		}
+	}
+	if strings.Index(index, `id="sect-scheduled"`) < strings.Index(index, `id="sect-running"`) {
+		t.Error("the scheduled task runs come after the running sessions")
+	}
+	app := readUI(t, "ui/app.js")
+	for _, want := range []string{
+		`sync($("#scheduled"), scheduled, function (s) { return s.id; },`,
+		`show(f(node, "sched"), !!s.scheduledTask);`,
+		// Only the Babysit button goes: a run living as a background copy
+		// keeps Stop and Copy attach.
+		`show(el(node, "acts"), !!s.actionable && (canBabysit(s) || !!s.canStop || !!s.attachCmd || !!s.sshAttachCmd));`,
+		`show(node.querySelector('[data-act="babysit"]'), canBabysit(s));`,
+		// With only runs running, the Running section does not claim
+		// nothing is running.
+		`"Only scheduled task runs are running."`,
+		// A run's row answers its buttons like a Running row does.
+		`onAction($("#sessions"), onSessionAction);`,
+		`onAction($("#scheduled"), onSessionAction);`,
+	} {
+		if !strings.Contains(app, want) {
+			t.Errorf("app.js does not contain %s", want)
+		}
+	}
+	script := "(function () {\n" + jsFunction(t, app, "canBabysit") + jsFunction(t, app, "heroSteps") +
+		`console.log(JSON.stringify([canBabysit({actionable: true}), canBabysit({actionable: true, scheduledTask: true})]));` + "\n" +
+		`console.log(JSON.stringify(heroSteps({env: {}, sessions: [{actionable: true, scheduledTask: true}]}).next));` + "\n" +
+		"})();\n"
+	want := []string{
+		`[true,false]`,
+		`["Start a Claude Code session, then press ",{"b":"Babysit"}," on it here."]`,
+	}
+	got := runNode(t, script)
+	if len(got) != len(want) {
+		t.Fatalf("want %d lines from node, got %q", len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("line %d: got %s, want %s", i, got[i], w)
 		}
 	}
 }
