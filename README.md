@@ -62,6 +62,8 @@ You can also download a binary from the releases page yourself (`ccbabysitter-<o
 
 Every release binary carries a build provenance attestation: `gh attestation verify <file> --repo pejmanebrahimi/ccbabysitter --signer-workflow pejmanebrahimi/ccbabysitter/.github/workflows/release.yml` checks it was built from this repository by its release workflow.
 
+In Claude Code you can also install the CC Babysitter plugin; on first use it gives you the one command that installs and starts CC Babysitter, to run in your terminal app. See [Use it from Claude Code](#use-it-from-claude-code).
+
 Or install it with Go 1.27 or later, which puts it in `$(go env GOPATH)/bin`:
 
 ```
@@ -83,6 +85,22 @@ go install ccbabysitter.dev/ccbabysitter/cmd/ccbabysitter@latest
 2. On your computer, run the `ssh -L ...` command it printed, then open the address it shows. The address includes the page's key, and `ccbabysitter status` on the server shows it again.
 3. In a project folder on the server, start a session with `claude --bg --remote-control`. CC Babysitter babysits new sessions as soon as they start.
 4. Close SSH. The session survives disconnects and reboots. Reach it from your phone, or with `claude attach <id>`.
+
+## Use it from Claude Code
+
+Install the plugin in Claude Code:
+
+```
+/plugin install ccbabysitter --marketplace pejmanebrahimi/ccbabysitter
+```
+
+Then ask in your own words:
+
+- "babysit this session"
+- "is the api session babysat?"
+- "why was my session restarted last night?"
+
+It works in Claude Code only, on the computer CC Babysitter runs on, and it never puts the page's key in the chat: to show the page it runs `ccbabysitter open`. If CC Babysitter is not installed or not running, it gives you the command to run in your terminal app. See [plugin/README.md](plugin/README.md) for what it runs and when it asks first.
 
 ## Use it from an AI agent
 
@@ -159,6 +177,7 @@ ccbabysitter retry S         try again on a babysat session that is stuck
 ccbabysitter stop S --yes    stop the background copy of S and keep the conversation
 ccbabysitter activity [S]    what CC Babysitter did and why, newest first
 ccbabysitter settings        show the settings, or change one with: settings NAME VALUE
+ccbabysitter open            open the page in your browser, printing no key
 ccbabysitter quit            quit CC Babysitter. Babysat sessions keep running where they are
 ccbabysitter help COMMAND    everything about one command
 ```

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"ccbabysitter.dev/ccbabysitter/internal/client"
+	"ccbabysitter.dev/ccbabysitter/internal/hosts"
 	"ccbabysitter.dev/ccbabysitter/internal/procs"
 	"ccbabysitter.dev/ccbabysitter/internal/state"
 	"ccbabysitter.dev/ccbabysitter/internal/supervise"
@@ -31,6 +32,8 @@ const (
 type controlEnv struct {
 	stateDir string
 	self     func(v supervise.View) (int, bool) // real: client.FindSelf(v, os.Getpid(), procs.NewReal())
+	open     func(url string) error             // real: openBrowser
+	headless func() bool                        // real: hosts.Headless; nil means a display
 	stdout   io.Writer
 	stderr   io.Writer
 }
@@ -45,8 +48,10 @@ func realControlEnv() controlEnv {
 		self: func(v supervise.View) (int, bool) {
 			return client.FindSelf(v, os.Getpid(), procs.NewReal())
 		},
-		stdout: os.Stdout,
-		stderr: os.Stderr,
+		open:     openBrowser,
+		headless: hosts.Headless,
+		stdout:   os.Stdout,
+		stderr:   os.Stderr,
 	}
 }
 
@@ -126,6 +131,7 @@ type controlArgs struct {
 var controlCommands = map[string]bool{
 	"status": true, "list": true, "show": true, "babysit": true, "unbabysit": true,
 	"retry": true, "stop": true, "activity": true, "settings": true, "quit": true,
+	"open": true,
 }
 
 func isControlCommand(name string) bool { return controlCommands[name] }
@@ -199,7 +205,7 @@ func parseControlArgs(name string, args []string) (controlArgs, error) {
 	a.pos = pos
 
 	switch name {
-	case "status", "list", "quit":
+	case "status", "list", "quit", "open":
 		if len(pos) != 0 {
 			return controlArgs{}, fmt.Errorf("%s takes no words, but got %s", name, pos[0])
 		}
@@ -289,6 +295,38 @@ func runControl(name string, args []string, env controlEnv) int {
 			return env.failErr(a.json, false, "", err)
 		}
 		return env.printResult(a.json, res, "")
+	}
+
+	// open decides whether there is a display where it runs, as a plain
+	// ccbabysitter does: the browser would start here, not where CC
+	// Babysitter runs. It needs the view only for the port to forward; the
+	// address it opens is a one-time one, and nothing it prints carries the
+	// page's key.
+	if name == "open" {
+		view, err := c.View(ctx)
+		if err != nil {
+			return env.failErr(a.json, false, "", err)
+		}
+		if env.headless != nil && env.headless() {
+			msg := "This machine has no display to open the page on."
+			if port, err := strconv.Atoi(portOf(view.URL)); err == nil && port > 0 {
+				user, address := currentUserAndAddress(env.stateDir)
+				msg += " From your computer, connect with:\n  " + tunnelHint(port, user, address) + "\nThen run"
+			} else {
+				msg += " Run"
+			}
+			msg += " ccbabysitter status in a terminal here for the address to open."
+			return env.printResult(a.json, supervise.Result{OK: true, Message: msg}, "")
+		}
+		u, err := c.LaunchURL(ctx)
+		if err != nil {
+			return env.failErr(a.json, false, "", err)
+		}
+		if err := env.open(u); err != nil {
+			return env.printResult(a.json, supervise.Result{Message: "Could not open a browser: " + err.Error() +
+				". Run ccbabysitter status in a terminal for the page's address."}, "")
+		}
+		return env.printResult(a.json, supervise.Result{OK: true, Message: "Opened the CC Babysitter page in your browser."}, "")
 	}
 
 	// activity without a session only needs the log.
